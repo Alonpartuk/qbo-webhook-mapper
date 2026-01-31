@@ -301,13 +301,13 @@ export default function LogsPage() {
 
       {/* Invoice Modal */}
       <Dialog open={showInvoiceModal} onClose={() => setShowInvoiceModal(false)}>
-        <DialogPanel className="max-w-4xl">
+        <DialogPanel className="max-w-4xl bg-white">
           <Title>QuickBooks Invoice</Title>
 
           {selectedInvoice && (
-            <div className="mt-4 space-y-6">
+            <div className="mt-4 space-y-6 bg-white">
               {/* Invoice Header */}
-              <div className="grid grid-cols-3 gap-4 p-4 bg-gray-50 rounded-lg">
+              <div className="grid grid-cols-3 gap-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
                 <div>
                   <Text className="text-sm text-gray-500">Invoice Number</Text>
                   <Text className="mt-1 font-medium text-lg">
@@ -342,21 +342,21 @@ export default function LogsPage() {
               {(selectedInvoice as { Line?: Array<{ Description?: string; Amount?: number }> }).Line && (
                 <div>
                   <Text className="text-sm text-gray-500 mb-2">Line Items</Text>
-                  <div className="border rounded-lg overflow-hidden">
-                    <table className="w-full text-sm">
-                      <thead className="bg-gray-100">
+                  <div className="border border-gray-300 rounded-lg overflow-hidden bg-white shadow-sm">
+                    <table className="w-full text-sm bg-white">
+                      <thead className="bg-gray-200">
                         <tr>
-                          <th className="px-4 py-2 text-left">Description</th>
-                          <th className="px-4 py-2 text-right">Amount</th>
+                          <th className="px-4 py-3 text-left font-semibold text-gray-700">Description</th>
+                          <th className="px-4 py-3 text-right font-semibold text-gray-700">Amount</th>
                         </tr>
                       </thead>
-                      <tbody>
+                      <tbody className="bg-white">
                         {((selectedInvoice as { Line?: Array<{ Description?: string; Amount?: number; DetailType?: string }> }).Line || [])
                           .filter(line => line.DetailType !== 'SubTotalLineDetail')
                           .map((line, idx) => (
-                            <tr key={idx} className="border-t">
-                              <td className="px-4 py-2">{line.Description || '-'}</td>
-                              <td className="px-4 py-2 text-right">${line.Amount?.toFixed(2) || '0.00'}</td>
+                            <tr key={idx} className="border-t border-gray-200 hover:bg-gray-50">
+                              <td className="px-4 py-3">{line.Description || '-'}</td>
+                              <td className="px-4 py-3 text-right font-medium">${line.Amount?.toFixed(2) || '0.00'}</td>
                             </tr>
                           ))}
                       </tbody>
