@@ -22,16 +22,38 @@ const logs: Map<string, SyncLog> = new Map();
 
 // Initialize with sample data
 function initSampleData() {
-  // Sample webhook source
+  // Sample webhook source 1 - Shopify Orders
   const sampleSource: WebhookSource = {
     source_id: 'sample-source-001',
-    name: 'Sample Shopify Orders',
-    description: 'Test webhook source for Shopify order data',
-    api_key: 'test-api-key-12345678901234567890',
+    name: 'Shopify Orders',
+    description: 'Webhook for Shopify order notifications',
+    api_key: 'sk_live_shopify_abc123def456ghi789jkl',
     is_active: true,
-    created_at: new Date(),
+    created_at: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // 7 days ago
   };
   sources.set(sampleSource.source_id, sampleSource);
+
+  // Sample webhook source 2 - Stripe Payments
+  const stripeSource: WebhookSource = {
+    source_id: 'sample-source-002',
+    name: 'Stripe Payments',
+    description: 'Webhook for Stripe payment events',
+    api_key: 'sk_live_stripe_xyz789abc123def456ghi',
+    is_active: true,
+    created_at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000), // 3 days ago
+  };
+  sources.set(stripeSource.source_id, stripeSource);
+
+  // Sample webhook source 3 - WooCommerce
+  const wooSource: WebhookSource = {
+    source_id: 'sample-source-003',
+    name: 'WooCommerce Store',
+    description: 'Webhook for WooCommerce new orders',
+    api_key: 'wc_live_key_mno456pqr789stu012vwx',
+    is_active: true,
+    created_at: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000), // 1 day ago
+  };
+  sources.set(wooSource.source_id, wooSource);
 
   // Sample webhook payload
   const samplePayload: WebhookPayload = {
@@ -76,6 +98,78 @@ function initSampleData() {
   };
   payloads.set(samplePayload.payload_id, samplePayload);
 
+  // Sample payload for Stripe
+  const stripePayload: WebhookPayload = {
+    payload_id: 'sample-payload-002',
+    source_id: stripeSource.source_id,
+    raw_payload: JSON.stringify({
+      id: 'pi_3NxXXX2eZvKYlo2C0Hs9v4vZ',
+      object: 'payment_intent',
+      amount: 15000,
+      currency: 'usd',
+      customer: 'cus_OvXXXXXX',
+      description: 'Invoice #INV-2024-001',
+      metadata: {
+        order_id: 'ORD-98765',
+        customer_name: 'Jane Smith',
+        customer_email: 'jane@company.com',
+      },
+      receipt_email: 'jane@company.com',
+      status: 'succeeded',
+      created: 1706745600,
+    }),
+    received_at: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2 hours ago
+    processed: false,
+  };
+  payloads.set(stripePayload.payload_id, stripePayload);
+
+  // Sample payload for WooCommerce
+  const wooPayload: WebhookPayload = {
+    payload_id: 'sample-payload-003',
+    source_id: wooSource.source_id,
+    raw_payload: JSON.stringify({
+      id: 54321,
+      number: 'WC-54321',
+      status: 'processing',
+      total: '245.50',
+      currency: 'USD',
+      billing: {
+        first_name: 'Robert',
+        last_name: 'Johnson',
+        company: 'Tech Corp',
+        address_1: '456 Oak Avenue',
+        city: 'Los Angeles',
+        state: 'CA',
+        postcode: '90001',
+        country: 'US',
+        email: 'robert@techcorp.com',
+        phone: '555-9876',
+      },
+      line_items: [
+        {
+          id: 1,
+          name: 'Pro Software License',
+          product_id: 101,
+          quantity: 1,
+          subtotal: '199.00',
+          total: '199.00',
+        },
+        {
+          id: 2,
+          name: 'Support Package',
+          product_id: 102,
+          quantity: 1,
+          subtotal: '46.50',
+          total: '46.50',
+        },
+      ],
+      date_created: '2025-01-31T14:22:00',
+    }),
+    received_at: new Date(Date.now() - 30 * 60 * 1000), // 30 minutes ago
+    processed: false,
+  };
+  payloads.set(wooPayload.payload_id, wooPayload);
+
   // Sample mapping configuration
   const sampleMapping: MappingConfiguration = {
     mapping_id: 'sample-mapping-001',
@@ -96,7 +190,42 @@ function initSampleData() {
   };
   mappings.set(sampleMapping.mapping_id, sampleMapping);
 
-  console.log('✓ Mock data initialized with sample source, payload, and mapping');
+  // Sample sync logs
+  const successLog: SyncLog = {
+    log_id: 'sample-log-001',
+    payload_id: 'sample-payload-001',
+    source_id: sampleSource.source_id,
+    mapping_id: sampleMapping.mapping_id,
+    status: 'success',
+    qbo_invoice_id: '178',
+    qbo_doc_number: 'INV-1001',
+    retry_count: 0,
+    created_at: new Date(Date.now() - 6 * 60 * 60 * 1000), // 6 hours ago
+  };
+  logs.set(successLog.log_id, successLog);
+
+  const failedLog: SyncLog = {
+    log_id: 'sample-log-002',
+    payload_id: 'sample-payload-002',
+    source_id: stripeSource.source_id,
+    status: 'failed',
+    error_message: 'CustomerRef.value is required - no customer mapping configured',
+    retry_count: 1,
+    created_at: new Date(Date.now() - 1 * 60 * 60 * 1000), // 1 hour ago
+  };
+  logs.set(failedLog.log_id, failedLog);
+
+  const pendingLog: SyncLog = {
+    log_id: 'sample-log-003',
+    payload_id: 'sample-payload-003',
+    source_id: wooSource.source_id,
+    status: 'pending',
+    retry_count: 0,
+    created_at: new Date(Date.now() - 15 * 60 * 1000), // 15 minutes ago
+  };
+  logs.set(pendingLog.log_id, pendingLog);
+
+  console.log('✓ Mock data initialized with 3 sources, 3 payloads, 1 mapping, and 3 sync logs');
 }
 
 // Initialize on module load
