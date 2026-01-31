@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Card,
   Title,
@@ -20,7 +20,6 @@ import {
   ClipboardDocumentIcon,
   ArrowPathIcon,
   TrashIcon,
-  EyeIcon,
 } from '@heroicons/react/24/outline';
 import * as sourcesApi from '../api/sources';
 import { WebhookSource } from '../types';

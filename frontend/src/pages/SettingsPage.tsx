@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Card,
@@ -181,7 +181,7 @@ export default function SettingsPage() {
         <div className="mt-4 space-y-2">
           <div className="flex justify-between">
             <Text>QBO Environment</Text>
-            <Badge color={process.env.NODE_ENV === 'production' ? 'green' : 'yellow'}>
+            <Badge color={import.meta.env.MODE === 'production' ? 'green' : 'yellow'}>
               Sandbox
             </Badge>
           </div>

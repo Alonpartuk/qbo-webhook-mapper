@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, Title, Text, Button, TextInput, Select, SelectItem } from '@tremor/react';
 import { PlusIcon, TrashIcon, PlayIcon } from '@heroicons/react/24/outline';
 import JsonViewer from '../common/JsonViewer';
@@ -14,12 +14,13 @@ interface MappingEditorProps {
 }
 
 export default function MappingEditor({
-  sourceId,
+  sourceId: _sourceId,
   mappingId,
   samplePayload,
   onSave,
   onCancel,
 }: MappingEditorProps) {
+  // Note: _sourceId is used by the parent component for context, but not directly in this component
   const [name, setName] = useState('');
   const [fieldMappings, setFieldMappings] = useState<FieldMapping[]>([]);
   const [qboFields, setQboFields] = useState<QBOField[]>([]);
