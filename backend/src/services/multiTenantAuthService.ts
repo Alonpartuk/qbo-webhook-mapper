@@ -33,16 +33,38 @@ if (!process.env.OAUTH_STATE_SECRET) {
 }
 
 /**
+ * Get the V1 multi-tenant OAuth callback URL
+ * Derives from the legacy redirect URI by replacing the path
+ */
+function getV1RedirectUri(): string {
+  const legacyUri = config.qbo.redirectUri;
+  // Replace /api/oauth/qbo/callback with /api/v1/oauth/callback
+  if (legacyUri.includes('/api/oauth/qbo/callback')) {
+    return legacyUri.replace('/api/oauth/qbo/callback', '/api/v1/oauth/callback');
+  }
+  // If already using v1 path, return as-is
+  if (legacyUri.includes('/api/v1/oauth/callback')) {
+    return legacyUri;
+  }
+  // Fallback: construct from base URL
+  const url = new URL(legacyUri);
+  url.pathname = '/api/v1/oauth/callback';
+  return url.toString();
+}
+
+/**
  * Create a fresh OAuth client instance
  * Uses factory pattern to avoid singleton race conditions
  */
 function createOAuthClient(): OAuthClient {
+  const v1RedirectUri = getV1RedirectUri();
+
   // Debug: Log OAuth config (mask secrets)
   console.log('[OAuth] Creating client with config:', {
     clientId: config.qbo.clientId ? `${config.qbo.clientId.substring(0, 8)}...` : 'MISSING',
     clientSecret: config.qbo.clientSecret ? '***SET***' : 'MISSING',
     environment: config.qbo.environment,
-    redirectUri: config.qbo.redirectUri,
+    redirectUri: v1RedirectUri,
   });
 
   // Validate required config
@@ -55,7 +77,7 @@ function createOAuthClient(): OAuthClient {
     clientId: config.qbo.clientId,
     clientSecret: config.qbo.clientSecret,
     environment: config.qbo.environment as 'sandbox' | 'production',
-    redirectUri: config.qbo.redirectUri,
+    redirectUri: v1RedirectUri,
   });
 }
 
