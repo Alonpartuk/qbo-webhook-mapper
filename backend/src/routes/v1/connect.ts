@@ -78,12 +78,19 @@ router.get('/connect/:clientSlug', tenantContext, async (req: Request, res: Resp
  * Extracts organization from state parameter and redirects to frontend.
  */
 router.get('/oauth/callback', async (req: Request, res: Response) => {
+  console.log('[OAuth V1 Callback] Received callback');
+  console.log('[OAuth V1 Callback] Query params:', {
+    hasCode: !!req.query.code,
+    hasState: !!req.query.state,
+    statePreview: req.query.state ? String(req.query.state).substring(0, 50) + '...' : 'NONE'
+  });
+
   try {
     const { code, state, error: oauthError, error_description } = req.query;
 
     // Handle OAuth errors from QBO
     if (oauthError) {
-      console.error('OAuth error from QBO:', oauthError, error_description);
+      console.error('[OAuth V1 Callback] Error from QBO:', oauthError, error_description);
       return res.redirect(
         `${FRONTEND_BASE_URL}/settings?error=${encodeURIComponent(
           (error_description as string) || (oauthError as string) || 'OAuth authorization failed'
@@ -92,16 +99,27 @@ router.get('/oauth/callback', async (req: Request, res: Response) => {
     }
 
     if (!code || !state) {
+      console.error('[OAuth V1 Callback] Missing params - code:', !!code, 'state:', !!state);
       return res.redirect(
         `${FRONTEND_BASE_URL}/settings?error=${encodeURIComponent('Missing OAuth parameters')}`
       );
     }
 
     // Build callback URL for the service to parse
-    const callbackUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+    // Handle Cloud Run's forwarded protocol
+    const protocol = req.get('x-forwarded-proto') || req.protocol;
+    const callbackUrl = `${protocol}://${req.get('host')}${req.originalUrl}`;
+    console.log('[OAuth V1 Callback] Processing callback URL:', callbackUrl.substring(0, 100) + '...');
 
     // Process the callback
     const result = await handleCallback(callbackUrl);
+    console.log('[OAuth V1 Callback] Result:', {
+      success: result.success,
+      organizationId: result.organizationId,
+      slug: result.slug,
+      realmId: result.realmId,
+      error: result.error
+    });
 
     if (!result.success) {
       console.error('OAuth callback failed:', result.error);

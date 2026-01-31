@@ -200,6 +200,8 @@ export async function handleCallback(url: string): Promise<{
   companyName?: string;
   error?: string;
 }> {
+  console.log('[MultiTenantAuth] handleCallback called');
+
   // Create fresh OAuth client for this callback
   const oauthClient = createOAuthClient();
 
@@ -208,24 +210,40 @@ export async function handleCallback(url: string): Promise<{
     const urlObj = new URL(url, 'http://localhost');
     const state = urlObj.searchParams.get('state');
 
+    console.log('[MultiTenantAuth] State parameter:', state ? state.substring(0, 50) + '...' : 'MISSING');
+
     if (!state) {
+      console.error('[MultiTenantAuth] No state parameter in callback URL');
       return { success: false, error: 'Missing state parameter' };
     }
 
     // Decode and verify state
     const stateResult = decodeOAuthState(state);
+    console.log('[MultiTenantAuth] State decode result:', {
+      valid: stateResult.valid,
+      organizationId: stateResult.organizationId,
+      slug: stateResult.slug,
+      error: stateResult.error
+    });
+
     if (!stateResult.valid) {
+      console.error('[MultiTenantAuth] Invalid state:', stateResult.error);
       return { success: false, error: stateResult.error };
     }
 
     const organizationId = stateResult.organizationId!;
     const slug = stateResult.slug;
 
+    console.log('[MultiTenantAuth] Extracted org from state:', { organizationId, slug });
+
     // Verify organization exists and is active
     const org = await getOrganizationById(organizationId);
     if (!org || !org.is_active) {
+      console.error('[MultiTenantAuth] Organization not found or inactive:', organizationId);
       return { success: false, error: 'Organization not found or inactive' };
     }
+
+    console.log('[MultiTenantAuth] Verified org exists:', org.slug);
 
     // Exchange code for tokens
     const authResponse = await oauthClient.createToken(url);
@@ -252,6 +270,8 @@ export async function handleCallback(url: string): Promise<{
     );
 
     // Save encrypted tokens to storage
+    console.log('[MultiTenantAuth] Saving token for organization:', organizationId, 'realmId:', realmId);
+
     await saveToken(organizationId, {
       realm_id: realmId,
       access_token: encryptToken(token.access_token),
@@ -264,6 +284,8 @@ export async function handleCallback(url: string): Promise<{
       sync_status: 'active',
       is_active: true,
     });
+
+    console.log('[MultiTenantAuth] Token saved successfully for org:', organizationId);
 
     return {
       success: true,
