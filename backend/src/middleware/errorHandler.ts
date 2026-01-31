@@ -16,12 +16,17 @@ export function errorHandler(
   const statusCode = err.statusCode || 500;
   const message = err.message || 'Internal server error';
 
-  res.status(statusCode).json({
+  const response: Record<string, unknown> = {
     success: false,
     error: message,
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
-    ...(err.details && { details: err.details }),
-  });
+  };
+  if (process.env.NODE_ENV === 'development' && err.stack) {
+    response.stack = err.stack;
+  }
+  if (err.details) {
+    response.details = err.details;
+  }
+  res.status(statusCode).json(response);
 }
 
 export function notFoundHandler(req: Request, res: Response): void {

@@ -170,7 +170,7 @@ export function transformPayloadToInvoice(
 
   return {
     success: validationErrors.length === 0,
-    transformedInvoice: invoice as QBOInvoice,
+    transformedInvoice: invoice as unknown as QBOInvoice,
     validationErrors,
     warnings,
   };

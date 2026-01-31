@@ -1,5 +1,24 @@
-import { getValidToken, getOAuthClient } from './qboAuthService';
+import { getValidToken } from './qboAuthService';
 import { QBOInvoice } from '../types';
+
+// QBO API response types
+interface QBOErrorResponse {
+  Fault?: {
+    Error?: Array<{ Message?: string; Detail?: string }>;
+  };
+}
+
+interface QBOInvoiceResponse extends QBOErrorResponse {
+  Invoice?: { Id: string; DocNumber: string };
+}
+
+interface QBOQueryResponse<T> extends QBOErrorResponse {
+  QueryResponse?: T;
+}
+
+interface QBOCompanyInfoResponse extends QBOErrorResponse {
+  CompanyInfo?: { Id: string; CompanyName: string; Country: string };
+}
 
 const QBO_BASE_URL = {
   sandbox: 'https://sandbox-quickbooks.api.intuit.com',
@@ -43,7 +62,7 @@ export async function createInvoice(invoice: QBOInvoice): Promise<{
       body: JSON.stringify(invoice),
     });
 
-    const data = await response.json();
+    const data = await response.json() as QBOInvoiceResponse;
 
     if (!response.ok) {
       const errorMessage = data.Fault?.Error?.[0]?.Message ||
@@ -97,7 +116,7 @@ export async function getInvoice(invoiceId: string): Promise<{
       },
     });
 
-    const data = await response.json();
+    const data = await response.json() as QBOInvoiceResponse;
 
     if (!response.ok) {
       return {
@@ -152,7 +171,7 @@ export async function getCustomers(searchTerm?: string): Promise<{
       },
     });
 
-    const data = await response.json();
+    const data = await response.json() as QBOQueryResponse<{ Customer?: Array<{ Id: string; DisplayName: string; PrimaryEmailAddr?: { Address: string } }> }>;
 
     if (!response.ok) {
       return {
@@ -161,7 +180,7 @@ export async function getCustomers(searchTerm?: string): Promise<{
       };
     }
 
-    const customers = (data.QueryResponse?.Customer || []).map((c: { Id: string; DisplayName: string; PrimaryEmailAddr?: { Address: string } }) => ({
+    const customers = (data.QueryResponse?.Customer || []).map((c) => ({
       id: c.Id,
       name: c.DisplayName,
       email: c.PrimaryEmailAddr?.Address,
@@ -213,7 +232,7 @@ export async function getItems(searchTerm?: string): Promise<{
       },
     });
 
-    const data = await response.json();
+    const data = await response.json() as QBOQueryResponse<{ Item?: Array<{ Id: string; Name: string; Type: string; UnitPrice?: number }> }>;
 
     if (!response.ok) {
       return {
@@ -222,7 +241,7 @@ export async function getItems(searchTerm?: string): Promise<{
       };
     }
 
-    const items = (data.QueryResponse?.Item || []).map((i: { Id: string; Name: string; Type: string; UnitPrice?: number }) => ({
+    const items = (data.QueryResponse?.Item || []).map((i) => ({
       id: i.Id,
       name: i.Name,
       type: i.Type,
@@ -268,7 +287,7 @@ export async function getCompanyInfo(): Promise<{
       },
     });
 
-    const data = await response.json();
+    const data = await response.json() as QBOCompanyInfoResponse;
 
     if (!response.ok) {
       return {
@@ -280,9 +299,9 @@ export async function getCompanyInfo(): Promise<{
     return {
       success: true,
       company: {
-        id: data.CompanyInfo?.Id,
-        name: data.CompanyInfo?.CompanyName,
-        country: data.CompanyInfo?.Country,
+        id: data.CompanyInfo?.Id || '',
+        name: data.CompanyInfo?.CompanyName || '',
+        country: data.CompanyInfo?.Country || '',
       },
     };
   } catch (error) {
