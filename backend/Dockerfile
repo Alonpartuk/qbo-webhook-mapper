@@ -9,9 +9,8 @@ RUN apk add --no-cache python3 make g++
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production
-RUN npm install typescript
+# Install ALL dependencies (including devDependencies for build)
+RUN npm ci
 
 # Copy source code
 COPY . .
@@ -19,8 +18,10 @@ COPY . .
 # Build TypeScript
 RUN npm run build
 
-# Remove dev dependencies and build tools
+# Remove devDependencies after build
 RUN npm prune --production
+
+# Clean up build tools
 RUN apk del python3 make g++
 
 # Set production environment
