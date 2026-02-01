@@ -68,8 +68,9 @@ app.use((req, res, next) => {
 // RATE LIMITING
 // =============================================================================
 
-// Auth endpoints - strict rate limiting (10 requests per 15 minutes)
-app.use('/api/admin/auth', authRateLimiter);
+// Auth login endpoints - strict rate limiting (10 requests per 15 minutes)
+// Only apply to actual login/callback routes, NOT to /status or /me
+app.use('/api/admin/auth/microsoft', authRateLimiter);
 
 // Proxy API - per API key rate limiting (60 requests per minute)
 app.use('/api/v1/org/:slug/proxy', proxyRateLimiter);
