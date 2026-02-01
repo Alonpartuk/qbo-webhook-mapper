@@ -444,15 +444,13 @@ export async function refreshSession(): Promise<boolean> {
 }
 
 /**
- * Get auth status (what providers are available)
+ * Get auth status (Microsoft SSO configuration)
  */
 export async function getAuthStatus(): Promise<{
-  microsoft: { configured: boolean };
-  magicLink: { enabled: boolean };
+  microsoft: { configured: boolean; tenantId?: string };
 }> {
   const response = await apiClient.get<ApiResponse<{
-    microsoft: { configured: boolean };
-    magicLink: { enabled: boolean };
+    microsoft: { configured: boolean; tenantId?: string };
   }>>('/admin/auth/status');
   return response.data.data!;
 }
@@ -460,8 +458,10 @@ export async function getAuthStatus(): Promise<{
 /**
  * Get Microsoft SSO login URL
  * Redirects browser to Microsoft for authentication
+ * @param rememberMe - If true, session will last 30 days instead of 12 hours
  */
-export function getMicrosoftLoginUrl(): string {
+export function getMicrosoftLoginUrl(rememberMe: boolean = false): string {
   const baseUrl = import.meta.env.VITE_API_URL || '/api';
-  return `${baseUrl}/admin/auth/microsoft`;
+  const rememberParam = rememberMe ? '?rememberMe=true' : '';
+  return `${baseUrl}/admin/auth/microsoft${rememberParam}`;
 }

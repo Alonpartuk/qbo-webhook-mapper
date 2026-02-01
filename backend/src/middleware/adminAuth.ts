@@ -1,12 +1,12 @@
 /**
  * Admin Authentication Middleware
  *
- * Verifies JWT tokens for admin dashboard routes.
- * Supports both HttpOnly cookies (preferred) and Authorization header.
- * Uses the adminAuthService for token verification.
+ * Verifies JWT tokens from HttpOnly cookies for admin dashboard routes.
+ * Microsoft SSO is the ONLY authentication method.
+ * Supports "Remember Me" with 30-day sessions.
  */
 
-import { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction, CookieOptions } from 'express';
 import { verifyJwt, getCurrentUser, isAdmin, isSuperAdmin } from '../services/adminAuthService';
 import { AdminContext, AdminRole } from '../types';
 
@@ -14,42 +14,41 @@ import { AdminContext, AdminRole } from '../types';
 
 // Cookie configuration
 export const AUTH_COOKIE_NAME = 'admin_session';
-export const AUTH_COOKIE_OPTIONS = {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: 'lax' as const,
-  maxAge: 12 * 60 * 60 * 1000, // 12 hours
-  path: '/',
-};
+
+// Session durations
+const SESSION_DURATION_DEFAULT = 12 * 60 * 60 * 1000; // 12 hours
+const SESSION_DURATION_REMEMBER = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 /**
- * Extract JWT from cookie first, then Authorization header
+ * Get cookie options based on remember me setting
+ */
+export function getAuthCookieOptions(rememberMe: boolean = false): CookieOptions {
+  return {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    maxAge: rememberMe ? SESSION_DURATION_REMEMBER : SESSION_DURATION_DEFAULT,
+    path: '/',
+  };
+}
+
+// Export default cookie options for backward compatibility
+export const AUTH_COOKIE_OPTIONS = getAuthCookieOptions(false);
+
+/**
+ * Extract JWT from cookie ONLY (no Authorization header fallback)
  */
 function extractToken(req: Request): string | null {
-  // 1. Check HttpOnly cookie first (preferred for persistence)
+  // Strictly check HttpOnly cookie only
   const cookieToken = req.cookies?.[AUTH_COOKIE_NAME];
   if (cookieToken) {
     return cookieToken;
   }
-
-  // 2. Fall back to Authorization header
-  const authHeader = req.headers.authorization;
-
-  if (!authHeader) {
-    return null;
-  }
-
-  // Support "Bearer <token>" format
-  if (authHeader.startsWith('Bearer ')) {
-    return authHeader.slice(7);
-  }
-
-  // Also support raw token
-  return authHeader;
+  return null;
 }
 
 /**
- * Middleware to verify admin JWT and attach admin context to request
+ * Middleware to verify admin JWT from cookie and attach admin context to request
  *
  * Usage:
  * router.use(adminAuth);
@@ -69,7 +68,7 @@ export async function adminAuth(
     if (!token) {
       res.status(401).json({
         success: false,
-        error: 'Authentication required',
+        error: 'Authentication required. Please sign in with Microsoft.',
         code: 'NO_TOKEN',
       });
       return;
@@ -81,7 +80,7 @@ export async function adminAuth(
     if (!valid || !payload) {
       res.status(401).json({
         success: false,
-        error: 'Invalid or expired token',
+        error: 'Invalid or expired session. Please sign in again.',
         code: 'INVALID_TOKEN',
       });
       return;
