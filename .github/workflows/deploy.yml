@@ -30,14 +30,63 @@ jobs:
         with:
           project_id: ${{ env.PROJECT_ID }}
 
-      - name: Deploy Backend to Cloud Run
+      - name: Get Frontend URL
+        id: frontend-url
         run: |
+          # Get the frontend service URL (may not exist on first deploy)
+          FRONTEND_URL=$(gcloud run services describe ${{ env.FRONTEND_SERVICE }} \
+            --region ${{ env.REGION }} \
+            --format='value(status.url)' 2>/dev/null || echo "")
+          echo "url=$FRONTEND_URL" >> $GITHUB_OUTPUT
+
+      - name: Deploy Backend to Cloud Run
+        env:
+          MICROSOFT_CLIENT_ID: ${{ secrets.MICROSOFT_CLIENT_ID }}
+          MICROSOFT_CLIENT_SECRET: ${{ secrets.MICROSOFT_CLIENT_SECRET }}
+          MICROSOFT_TENANT_ID: ${{ secrets.MICROSOFT_TENANT_ID }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          QBO_CLIENT_ID: ${{ secrets.QBO_CLIENT_ID }}
+          QBO_CLIENT_SECRET: ${{ secrets.QBO_CLIENT_SECRET }}
+          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+        run: |
+          # Build environment variables string
+          ENV_VARS="NODE_ENV=production,USE_MOCK_DATA=false"
+
+          # Add frontend URL if available
+          if [ -n "${{ steps.frontend-url.outputs.url }}" ]; then
+            ENV_VARS="$ENV_VARS,FRONTEND_URL=${{ steps.frontend-url.outputs.url }}"
+          fi
+
+          # Add secrets if they exist
+          if [ -n "$MICROSOFT_CLIENT_ID" ]; then
+            ENV_VARS="$ENV_VARS,MICROSOFT_CLIENT_ID=$MICROSOFT_CLIENT_ID"
+          fi
+          if [ -n "$MICROSOFT_CLIENT_SECRET" ]; then
+            ENV_VARS="$ENV_VARS,MICROSOFT_CLIENT_SECRET=$MICROSOFT_CLIENT_SECRET"
+          fi
+          if [ -n "$MICROSOFT_TENANT_ID" ]; then
+            ENV_VARS="$ENV_VARS,MICROSOFT_TENANT_ID=$MICROSOFT_TENANT_ID"
+          fi
+          if [ -n "$JWT_SECRET" ]; then
+            ENV_VARS="$ENV_VARS,JWT_SECRET=$JWT_SECRET"
+          fi
+          if [ -n "$QBO_CLIENT_ID" ]; then
+            ENV_VARS="$ENV_VARS,QBO_CLIENT_ID=$QBO_CLIENT_ID"
+          fi
+          if [ -n "$QBO_CLIENT_SECRET" ]; then
+            ENV_VARS="$ENV_VARS,QBO_CLIENT_SECRET=$QBO_CLIENT_SECRET"
+          fi
+          if [ -n "$ENCRYPTION_KEY" ]; then
+            ENV_VARS="$ENV_VARS,ENCRYPTION_KEY=$ENCRYPTION_KEY"
+          fi
+
           gcloud run deploy ${{ env.BACKEND_SERVICE }} \
             --source ./backend \
             --region ${{ env.REGION }} \
             --platform managed \
             --allow-unauthenticated \
             --clear-base-image \
+            --set-env-vars="$ENV_VARS" \
             --quiet
 
   deploy-frontend:
@@ -59,12 +108,19 @@ jobs:
         with:
           project_id: ${{ env.PROJECT_ID }}
 
+      - name: Get Backend URL
+        id: backend-url
+        run: |
+          BACKEND_URL=$(gcloud run services describe ${{ env.BACKEND_SERVICE }} \
+            --region ${{ env.REGION }} \
+            --format='value(status.url)')
+          echo "url=$BACKEND_URL" >> $GITHUB_OUTPUT
+
       - name: Deploy Frontend to Cloud Run
         run: |
-          gcloud run deploy ${{ env.FRONTEND_SERVICE }} \
-            --source ./frontend \
-            --region ${{ env.REGION }} \
-            --platform managed \
-            --allow-unauthenticated \
-            --clear-base-image \
+          # Use Cloud Build with substitutions to pass VITE_API_URL at build time
+          cd frontend
+          gcloud builds submit \
+            --config=cloudbuild.yaml \
+            --substitutions="_SERVICE_NAME=${{ env.FRONTEND_SERVICE }},_REGION=${{ env.REGION }},_VITE_API_URL=${{ steps.backend-url.outputs.url }}/api" \
             --quiet
