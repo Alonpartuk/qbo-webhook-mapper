@@ -1,13 +1,17 @@
 /**
  * Admin Authentication Routes
  *
- * Microsoft SSO is the ONLY authentication method.
- * Uses HttpOnly cookies for persistent sessions.
- * Supports "Remember Me" for 30-day sessions.
+ * Supports multiple authentication methods:
+ * - Microsoft SSO (primary, recommended)
+ * - Magic link (fallback/development)
+ *
+ * Uses HttpOnly cookies for persistent sessions (12 hours).
  */
 
 import { Router, Request, Response } from 'express';
 import {
+  requestMagicLink,
+  verifyMagicLink,
   getCurrentUser,
   refreshJwt,
   verifyJwt,
@@ -18,18 +22,15 @@ import {
   handleMicrosoftCallback,
   getMicrosoftSSOStatus,
 } from '../../services/microsoftAuthService';
-import { AUTH_COOKIE_NAME, getAuthCookieOptions } from '../../middleware/adminAuth';
+import { AUTH_COOKIE_NAME, AUTH_COOKIE_OPTIONS } from '../../middleware/adminAuth';
 
 const router = Router();
 
-// Remember Me cookie (stores preference for 30 days)
-const REMEMBER_ME_COOKIE = 'admin_remember_me';
-
 /**
- * Helper to set auth cookie with appropriate expiration
+ * Helper to set auth cookie
  */
-function setAuthCookie(res: Response, token: string, rememberMe: boolean = false): void {
-  res.cookie(AUTH_COOKIE_NAME, token, getAuthCookieOptions(rememberMe));
+function setAuthCookie(res: Response, token: string): void {
+  res.cookie(AUTH_COOKIE_NAME, token, AUTH_COOKIE_OPTIONS);
 }
 
 /**
@@ -37,11 +38,10 @@ function setAuthCookie(res: Response, token: string, rememberMe: boolean = false
  */
 function clearAuthCookie(res: Response): void {
   res.clearCookie(AUTH_COOKIE_NAME, { path: '/' });
-  res.clearCookie(REMEMBER_ME_COOKIE, { path: '/' });
 }
 
 // =============================================================================
-// MICROSOFT SSO ROUTES (Primary Authentication)
+// MICROSOFT SSO ROUTES
 // =============================================================================
 
 /**
@@ -55,6 +55,9 @@ router.get('/status', (req: Request, res: Response) => {
     success: true,
     data: {
       microsoft: microsoftStatus,
+      magicLink: {
+        enabled: true, // Always available as fallback
+      },
     },
   });
 });
@@ -62,7 +65,6 @@ router.get('/status', (req: Request, res: Response) => {
 /**
  * GET /api/admin/auth/microsoft
  * Initiate Microsoft SSO login
- * Query params: ?rememberMe=true for 30-day session
  */
 router.get('/microsoft', async (req: Request, res: Response) => {
   try {
@@ -73,20 +75,9 @@ router.get('/microsoft', async (req: Request, res: Response) => {
       });
     }
 
-    // Store remember me preference in cookie before redirect
-    const rememberMe = req.query.rememberMe === 'true';
-    if (rememberMe) {
-      res.cookie(REMEMBER_ME_COOKIE, 'true', {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        maxAge: 5 * 60 * 1000, // 5 minutes (just for the OAuth flow)
-      });
-    }
-
     const { url, state } = await getMicrosoftLoginUrl();
 
-    // Store state in cookie for verification
+    // Store state in cookie for verification (optional, state param should suffice)
     res.cookie('msal_state', state, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
@@ -121,18 +112,14 @@ router.get('/microsoft/callback', async (req: Request, res: Response) => {
       return res.redirect(`${adminBaseUrl}/login?error=missing_params`);
     }
 
-    // Check for remember me preference
-    const rememberMe = req.cookies?.[REMEMBER_ME_COOKIE] === 'true';
+    const result = await handleMicrosoftCallback(String(code), String(state));
 
-    const result = await handleMicrosoftCallback(String(code), String(state), rememberMe);
-
-    // Clear temporary cookies
+    // Clear state cookie
     res.clearCookie('msal_state');
-    res.clearCookie(REMEMBER_ME_COOKIE);
 
     if (result.success && result.jwt) {
       // Set HttpOnly cookie for persistent session
-      setAuthCookie(res, result.jwt, rememberMe);
+      setAuthCookie(res, result.jwt);
       // Redirect to dashboard (no token in URL needed)
       return res.redirect(`${adminBaseUrl}/admin/organizations`);
     }
@@ -151,17 +138,115 @@ router.get('/microsoft/callback', async (req: Request, res: Response) => {
 });
 
 // =============================================================================
-// SESSION MANAGEMENT
+// MAGIC LINK ROUTES (Fallback/Development)
 // =============================================================================
 
 /**
+ * POST /api/admin/auth/magic-link
+ * Request a magic link for email
+ */
+router.post('/magic-link', async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email is required',
+      });
+    }
+
+    const result = await requestMagicLink(email);
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        error: result.message,
+      });
+    }
+
+    // In development, return the magic link URL for testing
+    if (process.env.NODE_ENV !== 'production' && result.magicLinkUrl) {
+      return res.json({
+        success: true,
+        message: result.message,
+        magicLinkUrl: result.magicLinkUrl, // Only in dev!
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: result.message,
+    });
+  } catch (error) {
+    console.error('Magic link request error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to send magic link',
+    });
+  }
+});
+
+/**
+ * POST /api/admin/auth/verify
+ * Verify magic link token and set session cookie
+ */
+router.post('/verify', async (req: Request, res: Response) => {
+  try {
+    const { token, email } = req.body;
+
+    if (!token || !email) {
+      return res.status(400).json({
+        success: false,
+        error: 'Token and email are required',
+      });
+    }
+
+    const result = await verifyMagicLink(token, email);
+
+    if (!result.success) {
+      return res.status(401).json({
+        success: false,
+        error: result.message,
+      });
+    }
+
+    // Set HttpOnly cookie for persistent session
+    if (result.jwt) {
+      setAuthCookie(res, result.jwt);
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        token: result.jwt,
+        user: result.user,
+      },
+    });
+  } catch (error) {
+    console.error('Token verification error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to verify token',
+    });
+  }
+});
+
+/**
  * GET /api/admin/auth/me
- * Get current authenticated user from session cookie
+ * Get current authenticated user (supports cookie or header)
  */
 router.get('/me', async (req: Request, res: Response) => {
   try {
-    // Strictly check cookie only
-    const token = req.cookies?.[AUTH_COOKIE_NAME];
+    // Check cookie first, then header
+    let token = req.cookies?.[AUTH_COOKIE_NAME];
+
+    if (!token) {
+      const authHeader = req.headers.authorization;
+      if (authHeader) {
+        token = authHeader.replace('Bearer ', '');
+      }
+    }
 
     if (!token) {
       return res.status(401).json({
@@ -249,8 +334,8 @@ router.post('/refresh', async (req: Request, res: Response) => {
       });
     }
 
-    // Set new cookie with same remember me setting
-    setAuthCookie(res, refreshResult.jwt, refreshResult.rememberMe || false);
+    // Set new cookie
+    setAuthCookie(res, refreshResult.jwt);
 
     return res.json({
       success: true,
@@ -261,6 +346,70 @@ router.post('/refresh', async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       error: 'Failed to refresh session',
+    });
+  }
+});
+
+/**
+ * POST /api/admin/auth/dev-login (Development only)
+ * Quick login for development/testing - bypasses email verification
+ */
+router.post('/dev-login', async (req: Request, res: Response) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(404).json({ error: 'Not found' });
+  }
+
+  try {
+    const { email = 'admin@test.com' } = req.body;
+
+    // Request magic link to auto-create user if needed
+    const linkResult = await requestMagicLink(email);
+    if (!linkResult.success) {
+      return res.status(400).json({
+        success: false,
+        error: linkResult.message,
+      });
+    }
+
+    // Extract token from magic link URL
+    if (!linkResult.magicLinkUrl) {
+      return res.status(400).json({
+        success: false,
+        error: 'Magic link URL not available',
+      });
+    }
+
+    const urlParams = new URL(linkResult.magicLinkUrl).searchParams;
+    const token = urlParams.get('token');
+
+    if (!token) {
+      return res.status(400).json({
+        success: false,
+        error: 'Could not extract token',
+      });
+    }
+
+    // Immediately verify it
+    const verifyResult = await verifyMagicLink(token, email);
+    if (!verifyResult.success) {
+      return res.status(400).json({
+        success: false,
+        error: verifyResult.message,
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        token: verifyResult.jwt,
+        user: verifyResult.user,
+      },
+    });
+  } catch (error) {
+    console.error('Dev login error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Dev login failed',
     });
   }
 });

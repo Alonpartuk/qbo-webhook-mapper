@@ -6,16 +6,18 @@
  */
 
 import { ConfidentialClientApplication, AuthorizationCodeRequest } from '@azure/msal-node';
+import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import {
   getAdminUserByEmail,
   createAdminUser,
   updateAdminLastLogin,
 } from './dataService';
-import { generateJwt } from './adminAuthService';
 import { AdminUser } from '../types';
 
 // Configuration
+const JWT_SECRET = process.env.JWT_SECRET || 'admin-jwt-secret-change-in-production';
+const JWT_EXPIRATION = '12h'; // 12 hours for admin sessions
 const ADMIN_BASE_URL = process.env.ADMIN_BASE_URL || 'http://localhost:3000';
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:3001';
 
@@ -136,8 +138,7 @@ export async function getMicrosoftLoginUrl(): Promise<{
  */
 export async function handleMicrosoftCallback(
   code: string,
-  state: string,
-  rememberMe: boolean = false
+  state: string
 ): Promise<{
   success: boolean;
   message: string;
@@ -201,12 +202,16 @@ export async function handleMicrosoftCallback(
       };
     }
 
-    // Generate JWT with rememberMe setting
-    const jwtToken = generateJwt(
-      authResult.user!.user_id,
-      authResult.user!.email,
-      authResult.user!.role,
-      rememberMe
+    // Generate JWT
+    const jwtToken = jwt.sign(
+      {
+        userId: authResult.user!.user_id,
+        email: authResult.user!.email,
+        role: authResult.user!.role,
+        authProvider: 'microsoft',
+      },
+      JWT_SECRET,
+      { expiresIn: JWT_EXPIRATION }
     );
 
     return {
@@ -214,6 +219,7 @@ export async function handleMicrosoftCallback(
       message: 'Authentication successful',
       jwt: jwtToken,
       user: authResult.user,
+      redirectUrl: `${ADMIN_BASE_URL}/auth/callback?token=${jwtToken}`,
     };
   } catch (error) {
     console.error('Microsoft OAuth error:', error);
