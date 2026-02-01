@@ -39,6 +39,8 @@ export default function App() {
                 <Route path="/admin" element={<OrganizationsPage />} />
                 <Route path="/admin/organizations" element={<OrganizationsPage />} />
                 <Route path="/admin/org/:slug" element={<OrgDetailPage />} />
+                <Route path="/admin/organizations/:orgId/sources" element={<SourcesPage />} />
+                <Route path="/admin/organizations/:orgId/logs" element={<LogsPage />} />
               </Routes>
             </MainLayout>
           }
