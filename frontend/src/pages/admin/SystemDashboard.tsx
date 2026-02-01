@@ -16,10 +16,8 @@ import {
   Building2,
   RefreshCw,
   Loader2,
-  ExternalLink,
   Server,
   Zap,
-  TrendingUp,
   AlertCircle,
 } from 'lucide-react';
 import {
@@ -67,12 +65,6 @@ export default function SystemDashboard() {
       setError(err instanceof Error ? err.message : 'Failed to load system data');
       setLoadingState('error');
     }
-  };
-
-  const formatDate = (dateStr?: string) => {
-    if (!dateStr) return 'Never';
-    const date = new Date(dateStr);
-    return date.toLocaleString();
   };
 
   const formatRelativeTime = (dateStr: string) => {

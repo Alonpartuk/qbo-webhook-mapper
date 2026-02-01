@@ -13,8 +13,6 @@ import {
   Plus,
   RefreshCw,
   Trash2,
-  Copy,
-  Check,
   AlertTriangle,
   Clock,
   Loader2,

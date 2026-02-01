@@ -332,7 +332,7 @@ export default function CodePlayground({ endpoint, orgSlug, apiKey }: CodePlaygr
                 <span className="text-xs text-gray-500">{response.time}ms</span>
               )}
             </div>
-            {response.data && (
+            {response.data !== undefined && (
               <button
                 onClick={copyResponse}
                 className="flex items-center gap-1.5 px-2 py-1 text-xs text-gray-500 hover:text-gray-700 transition-colors"
