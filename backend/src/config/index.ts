@@ -25,6 +25,9 @@ export const config = {
 
   // CORS - In production, frontend is served from the same origin
   frontendUrl: process.env.FRONTEND_URL || (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:5173'),
+
+  // Backend URL for OAuth callbacks - dynamically set in production
+  backendUrl: process.env.BACKEND_URL || 'http://localhost:3001',
 };
 
 export default config;

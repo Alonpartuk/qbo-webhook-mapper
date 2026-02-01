@@ -13,19 +13,17 @@ import {
 } from '@tremor/react';
 import {
   ServerStackIcon,
-  ArrowsRightLeftIcon,
+  BuildingOfficeIcon,
   CheckCircleIcon,
   XCircleIcon,
 } from '@heroicons/react/24/outline';
 import * as sourcesApi from '../api/sources';
 import * as invoicesApi from '../api/invoices';
-import * as oauthApi from '../api/oauth';
-import { WebhookSource, SyncLog, OAuthStatus } from '../types';
+import { WebhookSource, SyncLog } from '../types';
 
 export default function Dashboard() {
   const [sources, setSources] = useState<WebhookSource[]>([]);
   const [logs, setLogs] = useState<SyncLog[]>([]);
-  const [oauthStatus, setOauthStatus] = useState<OAuthStatus>({ connected: false });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -34,14 +32,12 @@ export default function Dashboard() {
 
   const loadData = async () => {
     try {
-      const [sourcesData, logsData, statusData] = await Promise.all([
+      const [sourcesData, logsData] = await Promise.all([
         sourcesApi.getSources(),
         invoicesApi.getSyncLogs(10),
-        oauthApi.getConnectionStatus(),
       ]);
       setSources(sourcesData);
       setLogs(logsData);
-      setOauthStatus(statusData);
     } catch (err) {
       console.error('Failed to load dashboard data:', err);
     } finally {
@@ -97,23 +93,19 @@ export default function Dashboard() {
           </Flex>
         </Card>
 
-        <Card decoration="top" decorationColor={oauthStatus.connected ? 'green' : 'gray'}>
-          <Flex justifyContent="start" className="space-x-4">
-            <ArrowsRightLeftIcon
-              className={`w-8 h-8 ${oauthStatus.connected ? 'text-green-500' : 'text-gray-400'}`}
-            />
-            <div>
-              <Text>QuickBooks</Text>
-              <div className="mt-1">
-                {oauthStatus.connected ? (
-                  <Badge color="green">Connected</Badge>
-                ) : (
-                  <Badge color="gray">Not Connected</Badge>
-                )}
+        <Link to="/admin/organizations">
+          <Card decoration="top" decorationColor="indigo" className="hover:bg-gray-50 cursor-pointer transition-colors">
+            <Flex justifyContent="start" className="space-x-4">
+              <BuildingOfficeIcon className="w-8 h-8 text-indigo-500" />
+              <div>
+                <Text>Organizations</Text>
+                <div className="mt-1">
+                  <Badge color="indigo">Manage</Badge>
+                </div>
               </div>
-            </div>
-          </Flex>
-        </Card>
+            </Flex>
+          </Card>
+        </Link>
       </Grid>
 
       {/* Quick Actions & Recent Activity */}
@@ -206,21 +198,6 @@ export default function Dashboard() {
         </Card>
       </Grid>
 
-      {/* QBO Connection Status */}
-      {oauthStatus.connected && oauthStatus.company && (
-        <Card className="mt-6">
-          <Title>Connected QuickBooks Company</Title>
-          <div className="mt-4">
-            <Text className="font-medium">{oauthStatus.company.name}</Text>
-            <Text className="text-sm text-gray-500">
-              Company ID: {oauthStatus.realmId}
-            </Text>
-            <Text className="text-sm text-gray-500">
-              Country: {oauthStatus.company.country}
-            </Text>
-          </div>
-        </Card>
-      )}
     </div>
   );
 }

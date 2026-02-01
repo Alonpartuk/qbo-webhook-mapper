@@ -34,22 +34,12 @@ if (!process.env.OAUTH_STATE_SECRET) {
 
 /**
  * Get the V1 multi-tenant OAuth callback URL
- * Derives from the legacy redirect URI by replacing the path
+ * Uses BACKEND_URL environment variable for dynamic redirect URI
  */
 function getV1RedirectUri(): string {
-  const legacyUri = config.qbo.redirectUri;
-  // Replace /api/oauth/qbo/callback with /api/v1/oauth/callback
-  if (legacyUri.includes('/api/oauth/qbo/callback')) {
-    return legacyUri.replace('/api/oauth/qbo/callback', '/api/v1/oauth/callback');
-  }
-  // If already using v1 path, return as-is
-  if (legacyUri.includes('/api/v1/oauth/callback')) {
-    return legacyUri;
-  }
-  // Fallback: construct from base URL
-  const url = new URL(legacyUri);
-  url.pathname = '/api/v1/oauth/callback';
-  return url.toString();
+  // Use BACKEND_URL for dynamic environment support
+  const backendUrl = config.backendUrl;
+  return `${backendUrl}/api/v1/oauth/callback`;
 }
 
 /**
@@ -109,12 +99,18 @@ function verifyStateSignature(data: string, signature: string): boolean {
 }
 
 /**
- * Encode OAuth state with organization info and signature
+ * Encode OAuth state with organization info, return URL, and signature
  * @param source - 'public' for client-facing connect, 'admin' for admin dashboard
+ * @param returnUrl - Optional URL to redirect to after OAuth callback
  */
-function encodeOAuthState(organizationId: string, slug: string, source: 'public' | 'admin' = 'admin'): string {
+function encodeOAuthState(
+  organizationId: string,
+  slug: string,
+  source: 'public' | 'admin' = 'admin',
+  returnUrl?: string
+): string {
   const timestamp = Date.now();
-  const data = JSON.stringify({ org_id: organizationId, slug, timestamp, source });
+  const data = JSON.stringify({ org_id: organizationId, slug, timestamp, source, return_url: returnUrl });
   const signature = signState(data);
   const state = Buffer.from(JSON.stringify({ data, signature })).toString('base64');
   return state;
@@ -128,6 +124,7 @@ function decodeOAuthState(state: string): {
   organizationId?: string;
   slug?: string;
   source?: 'public' | 'admin';
+  returnUrl?: string;
   error?: string;
 } {
   try {
@@ -154,6 +151,7 @@ function decodeOAuthState(state: string): {
       organizationId: parsed.org_id,
       slug: parsed.slug,
       source: parsed.source || 'admin',
+      returnUrl: parsed.return_url,
     };
   } catch (error) {
     // Log specific error for debugging
@@ -165,16 +163,18 @@ function decodeOAuthState(state: string): {
 /**
  * Get authorization URL for a specific organization
  * @param source - 'public' for client-facing connect page, 'admin' for admin dashboard
+ * @param returnUrl - Optional URL to redirect to after OAuth callback
  */
 export async function getAuthorizationUrl(
   organizationIdOrSlug: string,
-  source: 'public' | 'admin' = 'admin'
+  source: 'public' | 'admin' = 'admin',
+  returnUrl?: string
 ): Promise<{
   success: boolean;
   authUrl?: string;
   error?: string;
 }> {
-  console.log('[OAuth] getAuthorizationUrl called for:', organizationIdOrSlug, 'source:', source);
+  console.log('[OAuth] getAuthorizationUrl called for:', organizationIdOrSlug, 'source:', source, 'returnUrl:', returnUrl);
 
   // Try to find organization by ID first, then by slug
   let org: Organization | null = await getOrganizationById(organizationIdOrSlug);
@@ -201,8 +201,8 @@ export async function getAuthorizationUrl(
     };
   }
 
-  // Generate signed state parameter with source
-  const state = encodeOAuthState(org.organization_id, org.slug, source);
+  // Generate signed state parameter with source and return URL
+  const state = encodeOAuthState(org.organization_id, org.slug, source, returnUrl);
 
   // Create fresh OAuth client for this request
   const oauthClient = createOAuthClient();
@@ -228,6 +228,7 @@ export async function handleCallback(url: string): Promise<{
   realmId?: string;
   companyName?: string;
   source?: 'public' | 'admin';
+  returnUrl?: string;
   error?: string;
 }> {
   console.log('[MultiTenantAuth] handleCallback called');
@@ -265,8 +266,9 @@ export async function handleCallback(url: string): Promise<{
     const organizationId = stateResult.organizationId!;
     const slug = stateResult.slug;
     const source = stateResult.source;
+    const returnUrl = stateResult.returnUrl;
 
-    console.log('[MultiTenantAuth] Extracted org from state:', { organizationId, slug });
+    console.log('[MultiTenantAuth] Extracted org from state:', { organizationId, slug, returnUrl });
 
     // Verify organization exists and is active
     const org = await getOrganizationById(organizationId);
@@ -326,6 +328,7 @@ export async function handleCallback(url: string): Promise<{
       realmId,
       companyName,
       source,
+      returnUrl,
     };
   } catch (error) {
     console.error('OAuth callback error:', error);

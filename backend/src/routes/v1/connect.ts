@@ -34,15 +34,17 @@ const FRONTEND_BASE_URL = config.frontendUrl;
  * Query params:
  * - redirect: 'false' to return URL instead of redirecting
  * - source: 'public' for client-facing connect, 'admin' for admin dashboard
+ * - return_url: Optional URL to redirect to after OAuth callback
  */
 router.get('/connect/:clientSlug', tenantContext, async (req: Request, res: Response) => {
   try {
     const { organization_id, organization_slug } = req.tenant!;
     const shouldRedirect = req.query.redirect !== 'false';
     const source = req.query.source === 'public' ? 'public' : 'admin';
+    const returnUrl = req.query.return_url as string | undefined;
 
     // Generate authorization URL with org context in state
-    const result = await getAuthorizationUrl(organization_id, source);
+    const result = await getAuthorizationUrl(organization_id, source, returnUrl);
 
     if (!result.success) {
       const errorPath = source === 'public'
@@ -127,43 +129,62 @@ router.get('/oauth/callback', async (req: Request, res: Response) => {
       slug: result.slug,
       realmId: result.realmId,
       source: result.source,
+      returnUrl: result.returnUrl,
       error: result.error
     });
 
-    // Determine redirect path based on source (public vs admin)
+    // Determine redirect path based on source (public vs admin) and returnUrl
     const isPublic = result.source === 'public';
+
+    // Build success/error params
+    const buildRedirectUrl = (basePath: string, params: Record<string, string>): string => {
+      // If returnUrl is provided, use it as the base
+      if (result.returnUrl) {
+        try {
+          const url = new URL(result.returnUrl);
+          Object.entries(params).forEach(([key, value]) => {
+            url.searchParams.set(key, value);
+          });
+          return url.toString();
+        } catch {
+          // Invalid URL, fall back to default behavior
+          console.warn('[OAuth V1 Callback] Invalid returnUrl:', result.returnUrl);
+        }
+      }
+      // Default behavior: use FRONTEND_BASE_URL + basePath
+      const queryString = new URLSearchParams(params).toString();
+      return `${FRONTEND_BASE_URL}${basePath}${queryString ? '?' + queryString : ''}`;
+    };
 
     if (!result.success) {
       console.error('OAuth callback failed:', result.error);
       const errorPath = isPublic && result.slug
-        ? `/connect/${result.slug}?error=${encodeURIComponent(result.error!)}`
-        : `/settings?error=${encodeURIComponent(result.error!)}`;
-      return res.redirect(`${FRONTEND_BASE_URL}${errorPath}`);
+        ? `/connect/${result.slug}`
+        : `/settings`;
+      return res.redirect(buildRedirectUrl(errorPath, { error: result.error! }));
     }
 
-    // Success - redirect based on source
-    const successParams = new URLSearchParams({
+    // Success - build params
+    const successParams: Record<string, string> = {
       connected: 'true',
       realmId: result.realmId!,
-    });
+    };
 
     if (result.companyName) {
-      successParams.set('companyName', result.companyName);
+      successParams.companyName = result.companyName;
     }
 
     // Public connects go to /connect/:slug, admin connects go to /org/:slug/settings
-    let redirectPath: string;
+    let defaultRedirectPath: string;
     if (isPublic && result.slug) {
-      redirectPath = `/connect/${result.slug}`;
+      defaultRedirectPath = `/connect/${result.slug}`;
     } else if (result.slug) {
-      redirectPath = `/org/${result.slug}/settings`;
+      defaultRedirectPath = `/org/${result.slug}/settings`;
     } else {
-      redirectPath = '/settings';
+      defaultRedirectPath = '/settings';
     }
 
-    return res.redirect(
-      `${FRONTEND_BASE_URL}${redirectPath}?${successParams.toString()}`
-    );
+    return res.redirect(buildRedirectUrl(defaultRedirectPath, successParams));
   } catch (error) {
     console.error('OAuth callback error:', error);
     return res.redirect(
@@ -201,7 +222,7 @@ router.get('/org/:clientSlug/status', tenantContext, async (req: Request, res: R
         },
         connectUrl: status.connected
           ? null
-          : `${process.env.API_BASE_URL || req.protocol + '://' + req.get('host')}/api/v1/connect/${organization_slug}`,
+          : `${process.env.API_BASE_URL || req.protocol + '://' + req.get('host')}/api/v1/connect/${organization_slug}?source=admin`,
       },
     });
   } catch (error) {
@@ -240,7 +261,7 @@ router.post('/org/:clientSlug/disconnect', tenantContext, async (req: Request, r
       message: 'Disconnected from QuickBooks',
       data: {
         previousRealmId: currentStatus.realmId,
-        connectUrl: `${process.env.API_BASE_URL || req.protocol + '://' + req.get('host')}/api/v1/connect/${organization_slug}`,
+        connectUrl: `${process.env.API_BASE_URL || req.protocol + '://' + req.get('host')}/api/v1/connect/${organization_slug}?source=admin`,
       },
     });
   } catch (error) {

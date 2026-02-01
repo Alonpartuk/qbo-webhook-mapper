@@ -1,117 +1,54 @@
+/**
+ * Legacy OAuth Routes (DEPRECATED)
+ *
+ * These routes are deprecated and disabled. Use the multi-tenant V1 API instead:
+ * - GET /api/v1/connect/:clientSlug - Start OAuth flow for an organization
+ * - GET /api/v1/oauth/callback - OAuth callback (shared)
+ * - GET /api/v1/org/:clientSlug/status - Get connection status
+ * - POST /api/v1/org/:clientSlug/disconnect - Disconnect from QBO
+ */
+
 import { Router, Request, Response } from 'express';
-import * as qboAuthService from '../services/qboAuthService';
-import * as qboInvoiceService from '../services/qboInvoiceService';
-import config from '../config';
 
 const router = Router();
 
-// GET /api/oauth/qbo/authorize - Start OAuth flow
-router.get('/qbo/authorize', (req: Request, res: Response) => {
-  try {
-    const authUrl = qboAuthService.getAuthorizationUrl();
-    return res.redirect(authUrl);
-  } catch (error) {
-    console.error('OAuth authorize error:', error);
-    return res.status(500).json({
-      success: false,
-      error: 'Failed to generate authorization URL',
-    });
-  }
+const DEPRECATION_MESSAGE = {
+  success: false,
+  error: 'This endpoint is deprecated. Please use the multi-tenant V1 API: /api/v1/connect/:clientSlug',
+  docs: 'See /api/v1/org/:clientSlug/status for connection status',
+};
+
+// All legacy OAuth routes return deprecation error
+router.get('/qbo/authorize', (_req: Request, res: Response) => {
+  return res.status(410).json(DEPRECATION_MESSAGE);
 });
 
-// GET /api/oauth/qbo/callback - OAuth callback handler
-router.get('/qbo/callback', async (req: Request, res: Response) => {
-  try {
-    // Handle Cloud Run's forwarded protocol
-    const protocol = req.get('x-forwarded-proto') || req.protocol;
-    const fullUrl = `${protocol}://${req.get('host')}${req.originalUrl}`;
-
-    console.log('OAuth callback URL:', fullUrl);
-
-    const { realmId } = await qboAuthService.handleCallback(fullUrl);
-
-    // Redirect to frontend with success - use relative URL in production
-    const baseUrl = process.env.NODE_ENV === 'production' ? '' : config.frontendUrl;
-    return res.redirect(`${baseUrl}/settings?oauth=success&realmId=${realmId}`);
-  } catch (error) {
-    console.error('OAuth callback error:', error);
-    const baseUrl = process.env.NODE_ENV === 'production' ? '' : config.frontendUrl;
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    return res.redirect(`${baseUrl}/settings?oauth=error&message=${encodeURIComponent(errorMessage)}`);
-  }
+router.get('/qbo/callback', (_req: Request, res: Response) => {
+  return res.status(410).json({
+    ...DEPRECATION_MESSAGE,
+    error: 'Legacy OAuth callback is disabled. OAuth callbacks should use /api/v1/oauth/callback',
+  });
 });
 
-// GET /api/oauth/qbo/status - Get connection status
-router.get('/qbo/status', async (req: Request, res: Response) => {
-  try {
-    const status = await qboAuthService.getConnectionStatus();
-
-    // If connected, also get company info
-    if (status.connected) {
-      const companyInfo = await qboInvoiceService.getCompanyInfo();
-      return res.json({
-        success: true,
-        data: {
-          ...status,
-          company: companyInfo.company,
-        },
-      });
-    }
-
-    return res.json({
-      success: true,
-      data: status,
-    });
-  } catch (error) {
-    console.error('OAuth status error:', error);
-    return res.status(500).json({
-      success: false,
-      error: 'Failed to get connection status',
-    });
-  }
+router.get('/qbo/status', (_req: Request, res: Response) => {
+  return res.status(410).json({
+    ...DEPRECATION_MESSAGE,
+    error: 'Use /api/v1/org/:clientSlug/status for per-organization connection status',
+  });
 });
 
-// POST /api/oauth/qbo/disconnect - Revoke tokens
-router.post('/qbo/disconnect', async (req: Request, res: Response) => {
-  try {
-    await qboAuthService.disconnect();
-
-    return res.json({
-      success: true,
-      message: 'Disconnected from QuickBooks',
-    });
-  } catch (error) {
-    console.error('OAuth disconnect error:', error);
-    return res.status(500).json({
-      success: false,
-      error: 'Failed to disconnect',
-    });
-  }
+router.post('/qbo/disconnect', (_req: Request, res: Response) => {
+  return res.status(410).json({
+    ...DEPRECATION_MESSAGE,
+    error: 'Use POST /api/v1/org/:clientSlug/disconnect for per-organization disconnect',
+  });
 });
 
-// POST /api/oauth/qbo/refresh - Force token refresh
-router.post('/qbo/refresh', async (req: Request, res: Response) => {
-  try {
-    const token = await qboAuthService.getValidToken();
-
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        error: 'Not connected to QuickBooks',
-      });
-    }
-
-    return res.json({
-      success: true,
-      message: 'Token refreshed',
-    });
-  } catch (error) {
-    console.error('OAuth refresh error:', error);
-    return res.status(500).json({
-      success: false,
-      error: 'Failed to refresh token',
-    });
-  }
+router.post('/qbo/refresh', (_req: Request, res: Response) => {
+  return res.status(410).json({
+    ...DEPRECATION_MESSAGE,
+    error: 'Token refresh is handled automatically per-organization',
+  });
 });
 
 export default router;
