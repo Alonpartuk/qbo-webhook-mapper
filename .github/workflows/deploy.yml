@@ -37,6 +37,7 @@ jobs:
             --region ${{ env.REGION }} \
             --platform managed \
             --allow-unauthenticated \
+            --clear-base-image \
             --quiet
 
   deploy-frontend:
@@ -65,4 +66,5 @@ jobs:
             --region ${{ env.REGION }} \
             --platform managed \
             --allow-unauthenticated \
+            --clear-base-image \
             --quiet
