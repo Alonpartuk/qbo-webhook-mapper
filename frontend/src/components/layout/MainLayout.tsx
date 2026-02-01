@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   HomeIcon,
   ServerStackIcon,
@@ -7,7 +7,9 @@ import {
   DocumentTextIcon,
   Cog6ToothIcon,
   BuildingOffice2Icon,
+  ArrowRightOnRectangleIcon,
 } from '@heroicons/react/24/outline';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface NavItem {
   name: string;
@@ -34,11 +36,18 @@ interface MainLayoutProps {
 
 export default function MainLayout({ children }: MainLayoutProps) {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { user, logout } = useAuth();
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Sidebar */}
-      <div className="fixed inset-y-0 left-0 w-64 bg-white border-r border-gray-200">
+      <div className="fixed inset-y-0 left-0 w-64 bg-white border-r border-gray-200 flex flex-col">
         {/* Logo */}
         <div className="flex items-center h-16 px-6 border-b border-gray-200">
           <span className="text-xl font-bold text-blue-600">QBO</span>
@@ -101,6 +110,27 @@ export default function MainLayout({ children }: MainLayoutProps) {
             })}
           </div>
         </nav>
+
+        {/* User info & Logout */}
+        <div className="mt-auto border-t border-gray-200 p-4">
+          {user && (
+            <div className="mb-3">
+              <p className="text-sm font-medium text-gray-900 truncate">
+                {user.name || user.email}
+              </p>
+              <p className="text-xs text-gray-500 truncate">
+                {user.email}
+              </p>
+            </div>
+          )}
+          <button
+            onClick={handleLogout}
+            className="flex items-center w-full px-3 py-2 text-sm font-medium text-gray-700 rounded-lg hover:bg-gray-100 hover:text-gray-900 transition-colors"
+          >
+            <ArrowRightOnRectangleIcon className="w-5 h-5 mr-3 text-gray-400" />
+            Sign out
+          </button>
+        </div>
       </div>
 
       {/* Main content */}

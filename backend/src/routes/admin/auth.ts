@@ -1,8 +1,9 @@
 /**
  * Admin Authentication Routes
  *
- * Magic link authentication for admin users.
- * In development mode, also supports direct login for testing.
+ * Supports multiple authentication methods:
+ * - Microsoft SSO (primary, recommended)
+ * - Magic link (fallback/development)
  */
 
 import { Router, Request, Response } from 'express';
@@ -11,8 +12,113 @@ import {
   verifyMagicLink,
   getCurrentUser,
 } from '../../services/adminAuthService';
+import {
+  isMicrosoftSSOConfigured,
+  getMicrosoftLoginUrl,
+  handleMicrosoftCallback,
+  getMicrosoftSSOStatus,
+} from '../../services/microsoftAuthService';
 
 const router = Router();
+
+// =============================================================================
+// MICROSOFT SSO ROUTES
+// =============================================================================
+
+/**
+ * GET /api/admin/auth/status
+ * Get authentication provider status
+ */
+router.get('/status', (req: Request, res: Response) => {
+  const microsoftStatus = getMicrosoftSSOStatus();
+
+  return res.json({
+    success: true,
+    data: {
+      microsoft: microsoftStatus,
+      magicLink: {
+        enabled: true, // Always available as fallback
+      },
+    },
+  });
+});
+
+/**
+ * GET /api/admin/auth/microsoft
+ * Initiate Microsoft SSO login
+ */
+router.get('/microsoft', async (req: Request, res: Response) => {
+  try {
+    if (!isMicrosoftSSOConfigured()) {
+      return res.status(503).json({
+        success: false,
+        error: 'Microsoft SSO is not configured',
+      });
+    }
+
+    const { url, state } = await getMicrosoftLoginUrl();
+
+    // Store state in cookie for verification (optional, state param should suffice)
+    res.cookie('msal_state', state, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 5 * 60 * 1000, // 5 minutes
+    });
+
+    return res.redirect(url);
+  } catch (error) {
+    console.error('Microsoft login initiation error:', error);
+    const adminBaseUrl = process.env.ADMIN_BASE_URL || 'http://localhost:3000';
+    return res.redirect(`${adminBaseUrl}/login?error=sso_init_failed`);
+  }
+});
+
+/**
+ * GET /api/admin/auth/microsoft/callback
+ * Handle Microsoft OAuth callback
+ */
+router.get('/microsoft/callback', async (req: Request, res: Response) => {
+  try {
+    const { code, state, error, error_description } = req.query;
+
+    if (error) {
+      console.error('Microsoft OAuth error:', error, error_description);
+      const adminBaseUrl = process.env.ADMIN_BASE_URL || 'http://localhost:3000';
+      return res.redirect(`${adminBaseUrl}/login?error=${error}&message=${encodeURIComponent(String(error_description || ''))}`);
+    }
+
+    if (!code || !state) {
+      const adminBaseUrl = process.env.ADMIN_BASE_URL || 'http://localhost:3000';
+      return res.redirect(`${adminBaseUrl}/login?error=missing_params`);
+    }
+
+    const result = await handleMicrosoftCallback(String(code), String(state));
+
+    // Clear state cookie
+    res.clearCookie('msal_state');
+
+    if (result.redirectUrl) {
+      return res.redirect(result.redirectUrl);
+    }
+
+    // Fallback if no redirect URL
+    const adminBaseUrl = process.env.ADMIN_BASE_URL || 'http://localhost:3000';
+    if (result.success && result.jwt) {
+      return res.redirect(`${adminBaseUrl}/auth/callback?token=${result.jwt}`);
+    }
+
+    return res.redirect(`${adminBaseUrl}/login?error=auth_failed`);
+  } catch (error) {
+    console.error('Microsoft callback error:', error);
+    const adminBaseUrl = process.env.ADMIN_BASE_URL || 'http://localhost:3000';
+    return res.redirect(`${adminBaseUrl}/login?error=callback_failed`);
+  }
+});
+
+// =============================================================================
+// MAGIC LINK ROUTES (Fallback/Development)
+// =============================================================================
 
 /**
  * POST /api/admin/auth/magic-link
