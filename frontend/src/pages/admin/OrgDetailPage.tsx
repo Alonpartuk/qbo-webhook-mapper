@@ -18,12 +18,21 @@ import {
   Power,
   PowerOff,
   Map,
+  Key,
+  Database,
+  Download,
+  Search,
 } from 'lucide-react';
+import { exportToCsv, customerCsvColumns, itemCsvColumns } from '../../utils/csvExport';
 import { Organization, OrganizationStats, OrgConnectionStatus, WebhookSource, WebhookPayload, ClientMappingOverride, FieldMapping } from '../../types';
 import * as adminApi from '../../api/admin';
+import ApiKeyManager from '../../components/settings/ApiKeyManager';
 
 type LoadingState = 'idle' | 'loading' | 'success' | 'error';
-type TabType = 'overview' | 'settings' | 'mappings';
+type TabType = 'overview' | 'settings' | 'mappings' | 'apiKeys' | 'data';
+
+// QBO Entity types for data tab
+type EntityType = 'customers' | 'items' | 'invoices' | 'accounts' | 'vendors';
 
 export default function OrgDetailPage() {
   const { slug } = useParams<{ slug: string }>();
@@ -297,6 +306,18 @@ export default function OrgDetailPage() {
               icon={<Map className="w-4 h-4" />}
               label="Mappings"
             />
+            <TabButton
+              active={activeTab === 'apiKeys'}
+              onClick={() => setActiveTab('apiKeys')}
+              icon={<Key className="w-4 h-4" />}
+              label="API Keys"
+            />
+            <TabButton
+              active={activeTab === 'data'}
+              onClick={() => setActiveTab('data')}
+              icon={<Database className="w-4 h-4" />}
+              label="Data"
+            />
           </div>
         </div>
       </div>
@@ -336,6 +357,29 @@ export default function OrgDetailPage() {
             loading={loadingMappings}
             onRefresh={loadMappingsData}
           />
+        )}
+
+        {activeTab === 'apiKeys' && organization && (
+          <ApiKeyManager
+            organizationId={organization.organization_id}
+            organizationSlug={organization.slug}
+          />
+        )}
+
+        {activeTab === 'data' && organization && connectionStatus?.qbo?.connected && (
+          <DataTab
+            organizationSlug={organization.slug}
+          />
+        )}
+
+        {activeTab === 'data' && organization && !connectionStatus?.qbo?.connected && (
+          <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
+            <Database className="w-12 h-12 text-gray-300 mx-auto" />
+            <h3 className="mt-4 text-lg font-medium text-gray-900">QuickBooks Not Connected</h3>
+            <p className="mt-2 text-gray-500">
+              Connect to QuickBooks to browse and export entity data.
+            </p>
+          </div>
         )}
       </div>
     </div>
@@ -931,6 +975,234 @@ function MappingsTab({
             </button>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function DataTab({
+  organizationSlug,
+}: {
+  organizationSlug: string;
+}) {
+  const [entityType, setEntityType] = useState<EntityType>('customers');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [entities, setEntities] = useState<Record<string, unknown>[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchEntities = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const baseUrl = import.meta.env.VITE_API_URL || '';
+      const params = new URLSearchParams({ type: entityType });
+      if (searchQuery) params.append('search', searchQuery);
+
+      const response = await fetch(
+        `${baseUrl}/api/v1/org/${organizationSlug}/proxy/data?${params}`,
+        { credentials: 'include' }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to fetch data');
+      }
+
+      const data = await response.json();
+      setEntities(data.data || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch data');
+      setEntities([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchEntities();
+  }, [entityType, organizationSlug]);
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    fetchEntities();
+  };
+
+  const handleExport = () => {
+    if (entities.length === 0) return;
+
+    const columns = entityType === 'customers'
+      ? customerCsvColumns
+      : entityType === 'items'
+      ? itemCsvColumns
+      : Object.keys(entities[0]).map(key => ({ key, header: key }));
+
+    const filename = `${organizationSlug}-${entityType}-${new Date().toISOString().split('T')[0]}`;
+    exportToCsv(entities, columns, filename);
+  };
+
+  const entityTypes: { value: EntityType; label: string }[] = [
+    { value: 'customers', label: 'Customers' },
+    { value: 'items', label: 'Products/Services' },
+    { value: 'invoices', label: 'Invoices' },
+    { value: 'accounts', label: 'Accounts' },
+    { value: 'vendors', label: 'Vendors' },
+  ];
+
+  return (
+    <div className="space-y-6">
+      {/* Controls */}
+      <div className="bg-white rounded-xl border border-gray-200 p-4">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <select
+              value={entityType}
+              onChange={(e) => setEntityType(e.target.value as EntityType)}
+              className="px-3 py-2 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900"
+            >
+              {entityTypes.map((type) => (
+                <option key={type.value} value={type.value}>
+                  {type.label}
+                </option>
+              ))}
+            </select>
+
+            <form onSubmit={handleSearch} className="flex items-center gap-2">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search..."
+                  className="pl-10 pr-4 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900"
+                />
+              </div>
+              <button
+                type="submit"
+                className="px-4 py-2 text-sm font-medium text-white bg-gray-900 rounded-lg hover:bg-gray-800"
+              >
+                Search
+              </button>
+            </form>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={fetchEntities}
+              className="inline-flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:text-gray-900"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+            <button
+              onClick={handleExport}
+              disabled={entities.length === 0}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Download className="w-4 h-4" />
+              Export CSV
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Error */}
+      {error && (
+        <div className="p-4 bg-red-50 text-red-800 rounded-lg">
+          {error}
+        </div>
+      )}
+
+      {/* Data Table */}
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        {loading ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="w-6 h-6 text-gray-400 animate-spin" />
+          </div>
+        ) : entities.length === 0 ? (
+          <div className="text-center py-12 text-gray-500">
+            <Database className="w-8 h-8 mx-auto mb-2 text-gray-300" />
+            <p>No {entityType} found</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                    ID
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                    {entityType === 'customers' ? 'Name' : entityType === 'items' ? 'Name' : 'Name/Number'}
+                  </th>
+                  {entityType === 'customers' && (
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      Email
+                    </th>
+                  )}
+                  {entityType === 'items' && (
+                    <>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                        Type
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                        Price
+                      </th>
+                    </>
+                  )}
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                    Status
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {entities.slice(0, 50).map((entity, index) => (
+                  <tr key={(entity.Id as string) || index} className="hover:bg-gray-50">
+                    <td className="px-4 py-3 text-sm font-mono text-gray-900">
+                      {entity.Id as string}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-900">
+                      {(entity.DisplayName || entity.Name || entity.DocNumber || '-') as string}
+                    </td>
+                    {entityType === 'customers' && (
+                      <td className="px-4 py-3 text-sm text-gray-600">
+                        {((entity.PrimaryEmailAddr as Record<string, string>)?.Address || '-') as string}
+                      </td>
+                    )}
+                    {entityType === 'items' && (
+                      <>
+                        <td className="px-4 py-3 text-sm text-gray-600">
+                          {(entity.Type || '-') as string}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-600">
+                          {entity.UnitPrice != null ? `$${Number(entity.UnitPrice).toFixed(2)}` : '-'}
+                        </td>
+                      </>
+                    )}
+                    <td className="px-4 py-3">
+                      <span
+                        className={`px-2 py-0.5 text-xs font-medium rounded ${
+                          entity.Active
+                            ? 'bg-green-100 text-green-700'
+                            : 'bg-gray-100 text-gray-600'
+                        }`}
+                      >
+                        {entity.Active ? 'Active' : 'Inactive'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {entities.length > 50 && (
+              <div className="px-4 py-3 bg-gray-50 text-sm text-gray-500 text-center">
+                Showing 50 of {entities.length} results. Export to CSV to see all.
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

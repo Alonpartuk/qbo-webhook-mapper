@@ -10,6 +10,8 @@ import authRouter from './auth';
 import organizationsRouter from './organizations';
 import templatesRouter from './templates';
 import overridesRouter from './overrides';
+import apiKeysRouter from './apiKeys';
+import systemRouter from './system';
 import { adminAuth } from '../../middleware/adminAuth';
 
 const router = Router();
@@ -22,6 +24,13 @@ router.use('/organizations', adminAuth, organizationsRouter);
 
 // Global template routes (requires admin authentication)
 router.use('/templates', adminAuth, templatesRouter);
+
+// System monitoring routes (requires admin authentication)
+router.use('/system', adminAuth, systemRouter);
+
+// API Key management routes (requires admin authentication)
+// Mounts both /organizations/:orgId/api-keys and /global/api-keys
+router.use('/', adminAuth, apiKeysRouter);
 
 // Client override routes (includes effective-mapping, payloads, logs)
 // These are mounted at root because some paths start with /organizations/:orgId

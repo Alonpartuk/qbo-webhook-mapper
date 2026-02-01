@@ -118,6 +118,24 @@ export const {
   getSyncLogById,
 } = dataService;
 
+// --- API Keys ---
+export const {
+  createApiKey,
+  getApiKeyByHash,
+  getApiKeyById,
+  getApiKeysByOrganization,
+  getGlobalApiKeys,
+  updateApiKey,
+  updateApiKeyLastUsed,
+} = dataService;
+
+// --- API Usage Logs ---
+export const {
+  logApiUsage,
+  getApiUsageLogs,
+  getApiUsageStats,
+} = dataService;
+
 // =============================================================================
 // LEGACY BACKWARD COMPATIBILITY FUNCTIONS
 // These use DEFAULT_ORGANIZATION_ID for routes that don't specify an org

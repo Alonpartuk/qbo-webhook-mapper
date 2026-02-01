@@ -726,3 +726,251 @@ export async function getCompanyInfo(organizationId?: string): Promise<{
     };
   }
 }
+
+/**
+ * Query accounts (for Chart of Accounts)
+ * Uses executeWithTokenRefresh for automatic retry on 401
+ */
+export async function getAccounts(
+  searchTerm?: string,
+  organizationId?: string
+): Promise<{
+  success: boolean;
+  accounts?: Array<{ id: string; name: string; accountType: string; accountSubType?: string }>;
+  error?: string;
+  needsReconnect?: boolean;
+}> {
+  const baseUrl = getBaseUrl();
+
+  let query = "SELECT * FROM Account WHERE Active = true";
+  if (searchTerm) {
+    const escapedTerm = searchTerm.replace(/'/g, "\\'");
+    query += ` AND Name LIKE '%${escapedTerm}%'`;
+  }
+  query += " MAXRESULTS 100";
+
+  // Multi-tenant mode: use executeWithTokenRefresh
+  if (organizationId) {
+    type AccountResponse = QBOQueryResponse<{
+      Account?: Array<{
+        Id: string;
+        Name: string;
+        AccountType: string;
+        AccountSubType?: string;
+      }>
+    }>;
+
+    const result = await executeWithTokenRefresh<AccountResponse>(
+      organizationId,
+      async (accessToken, realmId) => {
+        const url = `${baseUrl}/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
+        return fetch(url, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Accept': 'application/json',
+          },
+        });
+      },
+      async (response) => response.json() as Promise<AccountResponse>
+    );
+
+    if (!result.success) {
+      return {
+        success: false,
+        error: result.error,
+        needsReconnect: result.needsReconnect,
+      };
+    }
+
+    const data = result.data!;
+    if (data.Fault) {
+      const errorInfo = formatQBOError(data);
+      return { success: false, error: errorInfo.message };
+    }
+
+    const accounts = (data.QueryResponse?.Account || []).map((a) => ({
+      id: a.Id,
+      name: a.Name,
+      accountType: a.AccountType,
+      accountSubType: a.AccountSubType,
+    }));
+
+    return { success: true, accounts };
+  }
+
+  // Legacy single-tenant mode
+  const tokenInfo = await getTokenForOrg();
+  if (!tokenInfo) {
+    return {
+      success: false,
+      error: 'Not connected to QuickBooks. Please authorize first.',
+      needsReconnect: true,
+    };
+  }
+
+  const { accessToken, realmId } = tokenInfo;
+  const url = `${baseUrl}/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Accept': 'application/json',
+      },
+    });
+
+    const data = await response.json() as QBOQueryResponse<{
+      Account?: Array<{
+        Id: string;
+        Name: string;
+        AccountType: string;
+        AccountSubType?: string;
+      }>
+    }>;
+
+    if (!response.ok) {
+      const errorInfo = formatQBOError(data);
+      return { success: false, error: errorInfo.message };
+    }
+
+    const accounts = (data.QueryResponse?.Account || []).map((a) => ({
+      id: a.Id,
+      name: a.Name,
+      accountType: a.AccountType,
+      accountSubType: a.AccountSubType,
+    }));
+
+    return { success: true, accounts };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to get accounts',
+    };
+  }
+}
+
+/**
+ * Query vendors
+ * Uses executeWithTokenRefresh for automatic retry on 401
+ */
+export async function getVendors(
+  searchTerm?: string,
+  organizationId?: string
+): Promise<{
+  success: boolean;
+  vendors?: Array<{ id: string; name: string; email?: string; companyName?: string }>;
+  error?: string;
+  needsReconnect?: boolean;
+}> {
+  const baseUrl = getBaseUrl();
+
+  let query = "SELECT * FROM Vendor WHERE Active = true";
+  if (searchTerm) {
+    const escapedTerm = searchTerm.replace(/'/g, "\\'");
+    query += ` AND DisplayName LIKE '%${escapedTerm}%'`;
+  }
+  query += " MAXRESULTS 100";
+
+  // Multi-tenant mode: use executeWithTokenRefresh
+  if (organizationId) {
+    type VendorResponse = QBOQueryResponse<{
+      Vendor?: Array<{
+        Id: string;
+        DisplayName: string;
+        PrimaryEmailAddr?: { Address: string };
+        CompanyName?: string;
+      }>
+    }>;
+
+    const result = await executeWithTokenRefresh<VendorResponse>(
+      organizationId,
+      async (accessToken, realmId) => {
+        const url = `${baseUrl}/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
+        return fetch(url, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Accept': 'application/json',
+          },
+        });
+      },
+      async (response) => response.json() as Promise<VendorResponse>
+    );
+
+    if (!result.success) {
+      return {
+        success: false,
+        error: result.error,
+        needsReconnect: result.needsReconnect,
+      };
+    }
+
+    const data = result.data!;
+    if (data.Fault) {
+      const errorInfo = formatQBOError(data);
+      return { success: false, error: errorInfo.message };
+    }
+
+    const vendors = (data.QueryResponse?.Vendor || []).map((v) => ({
+      id: v.Id,
+      name: v.DisplayName,
+      email: v.PrimaryEmailAddr?.Address,
+      companyName: v.CompanyName,
+    }));
+
+    return { success: true, vendors };
+  }
+
+  // Legacy single-tenant mode
+  const tokenInfo = await getTokenForOrg();
+  if (!tokenInfo) {
+    return {
+      success: false,
+      error: 'Not connected to QuickBooks. Please authorize first.',
+      needsReconnect: true,
+    };
+  }
+
+  const { accessToken, realmId } = tokenInfo;
+  const url = `${baseUrl}/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Accept': 'application/json',
+      },
+    });
+
+    const data = await response.json() as QBOQueryResponse<{
+      Vendor?: Array<{
+        Id: string;
+        DisplayName: string;
+        PrimaryEmailAddr?: { Address: string };
+        CompanyName?: string;
+      }>
+    }>;
+
+    if (!response.ok) {
+      const errorInfo = formatQBOError(data);
+      return { success: false, error: errorInfo.message };
+    }
+
+    const vendors = (data.QueryResponse?.Vendor || []).map((v) => ({
+      id: v.Id,
+      name: v.DisplayName,
+      email: v.PrimaryEmailAddr?.Address,
+      companyName: v.CompanyName,
+    }));
+
+    return { success: true, vendors };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to get vendors',
+    };
+  }
+}

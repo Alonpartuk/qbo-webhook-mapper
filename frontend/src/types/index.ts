@@ -242,3 +242,129 @@ export interface VisualFieldMapping extends FieldMapping {
   lookupType?: LookupType;
   lookupValue?: { id: string; name: string };
 }
+
+// =============================================================================
+// API KEY TYPES
+// =============================================================================
+
+// API Key permissions
+export interface ApiKeyPermissions {
+  endpoints: string[];
+  rate_limit_tier: 'standard' | 'premium' | 'unlimited';
+}
+
+// API Key (without the actual key - only shown on creation)
+export interface ApiKey {
+  key_id: string;
+  organization_id?: string;
+  key_prefix: string;
+  name: string;
+  key_type: 'tenant' | 'global_admin';
+  permissions?: ApiKeyPermissions;
+  is_active: boolean;
+  created_at: string;
+  created_by?: string;
+  last_used_at?: string;
+  expires_at?: string;
+  revoked_at?: string;
+  revoked_by?: string;
+  grace_period_ends_at?: string;
+}
+
+// Response when creating a new API key (includes the full key)
+export interface CreateApiKeyResult {
+  key_id: string;
+  key: string; // Full key - only shown once!
+  key_prefix: string;
+  name: string;
+  key_type: 'tenant' | 'global_admin';
+  organization_id?: string;
+  created_at: string;
+  expires_at?: string;
+}
+
+// Response when rotating a key
+export interface RotateApiKeyResult {
+  new_key_id: string;
+  new_key: string; // Full new key - only shown once!
+  new_key_prefix: string;
+  old_key_id: string;
+  grace_period_ends_at?: string;
+}
+
+// Input for creating a new API key
+export interface CreateApiKeyInput {
+  name: string;
+  permissions?: ApiKeyPermissions;
+  expires_at?: string;
+}
+
+// =============================================================================
+// SYSTEM MONITORING TYPES
+// =============================================================================
+
+// Tenant connection status for system dashboard
+export interface TenantConnectionStatus {
+  organization_id: string;
+  organization_name: string;
+  organization_slug: string;
+  plan_tier: string;
+  is_active: boolean;
+  qbo_connected: boolean;
+  realm_id?: string;
+  qbo_company_name?: string;
+  token_status?: 'active' | 'expired' | 'error' | 'revoked' | 'disconnected' | 'refresh_failed';
+  token_expires_at?: string;
+  last_sync_at?: string;
+  last_sync_status?: 'success' | 'failed';
+  total_sources: number;
+  sync_stats_24h: {
+    total: number;
+    success: number;
+    failed: number;
+  };
+  created_at: string;
+}
+
+// System health summary
+export interface SystemHealthSummary {
+  total_organizations: number;
+  active_organizations: number;
+  connected_organizations: number;
+  disconnected_organizations: number;
+  expiring_tokens_24h: number;
+  failed_syncs_24h: number;
+  total_syncs_24h: number;
+  success_rate_24h: number;
+}
+
+// System health response
+export interface SystemHealthResponse {
+  status: 'healthy' | 'warning' | 'critical';
+  issues: string[];
+  summary: SystemHealthSummary;
+  timestamp: string;
+}
+
+// Token expiry alert
+export interface TokenExpiryAlert {
+  organization_id: string;
+  organization_name: string;
+  organization_slug: string;
+  realm_id: string;
+  qbo_company_name?: string;
+  expires_at: string;
+  hours_until_expiry: number;
+}
+
+// Recent sync failure
+export interface RecentSyncFailure {
+  organization_id: string;
+  organization_name: string;
+  organization_slug: string;
+  log_id: string;
+  source_id: string;
+  error_message?: string;
+  error_code?: string;
+  created_at: string;
+}

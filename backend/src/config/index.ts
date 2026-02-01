@@ -6,6 +6,9 @@ export const config = {
   port: parseInt(process.env.PORT || '3001', 10),
   nodeEnv: process.env.NODE_ENV || 'development',
 
+  // Use mock data service instead of BigQuery
+  useMockData: process.env.USE_MOCK_DATA !== 'false',
+
   // BigQuery
   bigquery: {
     projectId: process.env.GOOGLE_CLOUD_PROJECT || 'octup-testing',

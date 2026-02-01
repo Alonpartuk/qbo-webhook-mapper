@@ -20,6 +20,7 @@ import {
   AdminUser,
   MagicLink,
 } from '../types';
+import { ApiKey, ApiUsageLog } from '../types/apiKey';
 
 const TABLES = {
   ORGANIZATIONS: 'organizations',
@@ -32,6 +33,8 @@ const TABLES = {
   MAPPINGS: 'mapping_configurations',
   TOKENS: 'oauth_tokens',
   LOGS: 'sync_logs',
+  API_KEYS: 'api_keys',
+  API_USAGE_LOGS: 'api_usage_logs',
 };
 
 // Helper to run queries
@@ -1268,4 +1271,297 @@ export async function getTokensExpiringWithin(minutes: number): Promise<OAuthTok
     AND access_token_expires_at < TIMESTAMP_ADD(CURRENT_TIMESTAMP(), INTERVAL @minutes MINUTE)
   `;
   return runQuery<OAuthToken>(query, { minutes });
+}
+
+// ============================================================
+// API KEYS
+// ============================================================
+
+/**
+ * Create a new API key (key_hash is pre-computed by apiKeyService)
+ */
+export async function createApiKey(apiKey: ApiKey): Promise<ApiKey> {
+  const table = dataset.table(TABLES.API_KEYS);
+  await table.insert([{
+    key_id: apiKey.key_id,
+    organization_id: apiKey.organization_id,
+    key_hash: apiKey.key_hash,
+    key_prefix: apiKey.key_prefix,
+    name: apiKey.name,
+    key_type: apiKey.key_type,
+    permissions: apiKey.permissions ? JSON.stringify(apiKey.permissions) : null,
+    is_active: apiKey.is_active,
+    created_at: apiKey.created_at.toISOString(),
+    created_by: apiKey.created_by,
+    last_used_at: apiKey.last_used_at?.toISOString() || null,
+    expires_at: apiKey.expires_at?.toISOString() || null,
+    revoked_at: apiKey.revoked_at?.toISOString() || null,
+    revoked_by: apiKey.revoked_by,
+    grace_period_ends_at: apiKey.grace_period_ends_at?.toISOString() || null,
+  }]);
+
+  return apiKey;
+}
+
+/**
+ * Get API key by its hash (for validation)
+ */
+export async function getApiKeyByHash(keyHash: string): Promise<ApiKey | null> {
+  const query = `
+    SELECT * FROM ${tablePath(TABLES.API_KEYS)}
+    WHERE key_hash = @keyHash
+    LIMIT 1
+  `;
+  const rows = await runQuery<ApiKey>(query, { keyHash });
+  if (rows.length === 0) return null;
+
+  const row = rows[0];
+  return {
+    ...row,
+    permissions: row.permissions
+      ? (typeof row.permissions === 'string' ? JSON.parse(row.permissions) : row.permissions)
+      : null,
+    created_at: new Date(row.created_at),
+    last_used_at: row.last_used_at ? new Date(row.last_used_at) : null,
+    expires_at: row.expires_at ? new Date(row.expires_at) : null,
+    revoked_at: row.revoked_at ? new Date(row.revoked_at) : null,
+    grace_period_ends_at: row.grace_period_ends_at ? new Date(row.grace_period_ends_at) : null,
+  };
+}
+
+/**
+ * Get API key by ID
+ */
+export async function getApiKeyById(keyId: string): Promise<ApiKey | null> {
+  const query = `
+    SELECT * FROM ${tablePath(TABLES.API_KEYS)}
+    WHERE key_id = @keyId
+    LIMIT 1
+  `;
+  const rows = await runQuery<ApiKey>(query, { keyId });
+  if (rows.length === 0) return null;
+
+  const row = rows[0];
+  return {
+    ...row,
+    permissions: row.permissions
+      ? (typeof row.permissions === 'string' ? JSON.parse(row.permissions) : row.permissions)
+      : null,
+    created_at: new Date(row.created_at),
+    last_used_at: row.last_used_at ? new Date(row.last_used_at) : null,
+    expires_at: row.expires_at ? new Date(row.expires_at) : null,
+    revoked_at: row.revoked_at ? new Date(row.revoked_at) : null,
+    grace_period_ends_at: row.grace_period_ends_at ? new Date(row.grace_period_ends_at) : null,
+  };
+}
+
+/**
+ * Get all API keys for an organization
+ */
+export async function getApiKeysByOrganization(organizationId: string): Promise<ApiKey[]> {
+  const query = `
+    SELECT * FROM ${tablePath(TABLES.API_KEYS)}
+    WHERE organization_id = @organizationId
+    ORDER BY created_at DESC
+  `;
+  const rows = await runQuery<ApiKey>(query, { organizationId });
+
+  return rows.map(row => ({
+    ...row,
+    permissions: row.permissions
+      ? (typeof row.permissions === 'string' ? JSON.parse(row.permissions) : row.permissions)
+      : null,
+    created_at: new Date(row.created_at),
+    last_used_at: row.last_used_at ? new Date(row.last_used_at) : null,
+    expires_at: row.expires_at ? new Date(row.expires_at) : null,
+    revoked_at: row.revoked_at ? new Date(row.revoked_at) : null,
+    grace_period_ends_at: row.grace_period_ends_at ? new Date(row.grace_period_ends_at) : null,
+  }));
+}
+
+/**
+ * Get all global admin API keys (organization_id IS NULL)
+ */
+export async function getGlobalApiKeys(): Promise<ApiKey[]> {
+  const query = `
+    SELECT * FROM ${tablePath(TABLES.API_KEYS)}
+    WHERE organization_id IS NULL
+    ORDER BY created_at DESC
+  `;
+  const rows = await runQuery<ApiKey>(query);
+
+  return rows.map(row => ({
+    ...row,
+    permissions: row.permissions
+      ? (typeof row.permissions === 'string' ? JSON.parse(row.permissions) : row.permissions)
+      : null,
+    created_at: new Date(row.created_at),
+    last_used_at: row.last_used_at ? new Date(row.last_used_at) : null,
+    expires_at: row.expires_at ? new Date(row.expires_at) : null,
+    revoked_at: row.revoked_at ? new Date(row.revoked_at) : null,
+    grace_period_ends_at: row.grace_period_ends_at ? new Date(row.grace_period_ends_at) : null,
+  }));
+}
+
+/**
+ * Update API key fields
+ */
+export async function updateApiKey(
+  keyId: string,
+  updates: Partial<Pick<ApiKey, 'is_active' | 'revoked_at' | 'revoked_by' | 'grace_period_ends_at' | 'expires_at'>>
+): Promise<void> {
+  const setClauses: string[] = [];
+  const params: Record<string, unknown> = { keyId };
+
+  if (updates.is_active !== undefined) {
+    setClauses.push('is_active = @is_active');
+    params.is_active = updates.is_active;
+  }
+
+  if (updates.revoked_at !== undefined) {
+    setClauses.push('revoked_at = @revoked_at');
+    params.revoked_at = updates.revoked_at ? updates.revoked_at.toISOString() : null;
+  }
+
+  if (updates.revoked_by !== undefined) {
+    setClauses.push('revoked_by = @revoked_by');
+    params.revoked_by = updates.revoked_by;
+  }
+
+  if (updates.grace_period_ends_at !== undefined) {
+    setClauses.push('grace_period_ends_at = @grace_period_ends_at');
+    params.grace_period_ends_at = updates.grace_period_ends_at
+      ? updates.grace_period_ends_at.toISOString()
+      : null;
+  }
+
+  if (updates.expires_at !== undefined) {
+    setClauses.push('expires_at = @expires_at');
+    params.expires_at = updates.expires_at ? updates.expires_at.toISOString() : null;
+  }
+
+  if (setClauses.length === 0) return;
+
+  const query = `
+    UPDATE ${tablePath(TABLES.API_KEYS)}
+    SET ${setClauses.join(', ')}
+    WHERE key_id = @keyId
+  `;
+
+  await runQuery(query, params);
+}
+
+/**
+ * Update last_used_at timestamp for an API key
+ */
+export async function updateApiKeyLastUsed(keyId: string): Promise<void> {
+  const query = `
+    UPDATE ${tablePath(TABLES.API_KEYS)}
+    SET last_used_at = CURRENT_TIMESTAMP()
+    WHERE key_id = @keyId
+  `;
+  await runQuery(query, { keyId });
+}
+
+// ============================================================
+// API USAGE LOGS
+// ============================================================
+
+/**
+ * Log an API request
+ */
+export async function logApiUsage(log: ApiUsageLog): Promise<void> {
+  const table = dataset.table(TABLES.API_USAGE_LOGS);
+  await table.insert([{
+    log_id: log.log_id,
+    timestamp: log.timestamp.toISOString(),
+    organization_id: log.organization_id,
+    api_key_id: log.api_key_id,
+    endpoint: log.endpoint,
+    method: log.method,
+    query_params: log.query_params ? JSON.stringify(log.query_params) : null,
+    status_code: log.status_code,
+    response_time_ms: log.response_time_ms,
+    request_size_bytes: log.request_size_bytes,
+    response_size_bytes: log.response_size_bytes,
+    error_code: log.error_code,
+    user_agent: log.user_agent,
+    ip_address: log.ip_address,
+  }]);
+}
+
+/**
+ * Get API usage logs for an organization
+ */
+export async function getApiUsageLogs(
+  organizationId: string,
+  options: { limit?: number; offset?: number; startDate?: Date; endDate?: Date } = {}
+): Promise<ApiUsageLog[]> {
+  const { limit = 100, offset = 0, startDate, endDate } = options;
+
+  let query = `
+    SELECT * FROM ${tablePath(TABLES.API_USAGE_LOGS)}
+    WHERE organization_id = @organizationId
+  `;
+  const params: Record<string, unknown> = { organizationId, limit, offset };
+
+  if (startDate) {
+    query += ' AND timestamp >= @startDate';
+    params.startDate = startDate.toISOString();
+  }
+
+  if (endDate) {
+    query += ' AND timestamp <= @endDate';
+    params.endDate = endDate.toISOString();
+  }
+
+  query += ' ORDER BY timestamp DESC LIMIT @limit OFFSET @offset';
+
+  const rows = await runQuery<ApiUsageLog>(query, params);
+
+  return rows.map(row => ({
+    ...row,
+    timestamp: new Date(row.timestamp),
+    query_params: row.query_params
+      ? (typeof row.query_params === 'string' ? JSON.parse(row.query_params) : row.query_params)
+      : null,
+  }));
+}
+
+/**
+ * Get API usage statistics for an organization
+ */
+export async function getApiUsageStats(
+  organizationId: string,
+  hoursBack: number = 24
+): Promise<{
+  total_requests: number;
+  success_count: number;
+  error_count: number;
+  avg_response_time_ms: number;
+}> {
+  const query = `
+    SELECT
+      COUNT(*) as total_requests,
+      COUNTIF(status_code < 400) as success_count,
+      COUNTIF(status_code >= 400) as error_count,
+      AVG(response_time_ms) as avg_response_time_ms
+    FROM ${tablePath(TABLES.API_USAGE_LOGS)}
+    WHERE organization_id = @organizationId
+    AND timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @hoursBack HOUR)
+  `;
+
+  const rows = await runQuery<{
+    total_requests: number;
+    success_count: number;
+    error_count: number;
+    avg_response_time_ms: number;
+  }>(query, { organizationId, hoursBack });
+
+  return rows[0] || {
+    total_requests: 0,
+    success_count: 0,
+    error_count: 0,
+    avg_response_time_ms: 0,
+  };
 }

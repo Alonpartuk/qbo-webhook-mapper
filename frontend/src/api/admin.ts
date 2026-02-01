@@ -19,6 +19,14 @@ import {
   WebhookSource,
   WebhookPayload,
   SyncLog,
+  ApiKey,
+  CreateApiKeyResult,
+  RotateApiKeyResult,
+  CreateApiKeyInput,
+  TenantConnectionStatus,
+  SystemHealthResponse,
+  TokenExpiryAlert,
+  RecentSyncFailure,
 } from '../types';
 
 // =============================================================================
@@ -258,6 +266,131 @@ export async function getOrgSyncLogs(
 
   const response = await apiClient.get<ApiResponse<SyncLog[]>>(
     `/admin/organizations/${orgId}/logs${queryString}`
+  );
+  return response.data.data || [];
+}
+
+// =============================================================================
+// API KEYS
+// =============================================================================
+
+/**
+ * List all API keys for an organization
+ */
+export async function getApiKeys(orgId: string): Promise<ApiKey[]> {
+  const response = await apiClient.get<ApiResponse<ApiKey[]>>(
+    `/admin/organizations/${orgId}/api-keys`
+  );
+  return response.data.data || [];
+}
+
+/**
+ * Get details of a specific API key
+ */
+export async function getApiKey(orgId: string, keyId: string): Promise<ApiKey> {
+  const response = await apiClient.get<ApiResponse<ApiKey>>(
+    `/admin/organizations/${orgId}/api-keys/${keyId}`
+  );
+  return response.data.data!;
+}
+
+/**
+ * Create a new API key for an organization
+ * Returns the full key - save it immediately as it won't be shown again!
+ */
+export async function createApiKey(
+  orgId: string,
+  data: CreateApiKeyInput
+): Promise<CreateApiKeyResult> {
+  const response = await apiClient.post<ApiResponse<CreateApiKeyResult>>(
+    `/admin/organizations/${orgId}/api-keys`,
+    data
+  );
+  return response.data.data!;
+}
+
+/**
+ * Rotate an API key - generates a new key with optional grace period
+ * Returns the new full key - save it immediately!
+ */
+export async function rotateApiKey(
+  orgId: string,
+  keyId: string,
+  gracePeriodHours: number = 24
+): Promise<RotateApiKeyResult> {
+  const response = await apiClient.post<ApiResponse<RotateApiKeyResult>>(
+    `/admin/organizations/${orgId}/api-keys/${keyId}/rotate`,
+    { grace_period_hours: gracePeriodHours }
+  );
+  return response.data.data!;
+}
+
+/**
+ * Revoke an API key immediately
+ */
+export async function revokeApiKey(orgId: string, keyId: string): Promise<void> {
+  await apiClient.delete(`/admin/organizations/${orgId}/api-keys/${keyId}`);
+}
+
+/**
+ * List all global admin API keys (super_admin only)
+ */
+export async function getGlobalApiKeys(): Promise<ApiKey[]> {
+  const response = await apiClient.get<ApiResponse<ApiKey[]>>('/admin/global/api-keys');
+  return response.data.data || [];
+}
+
+/**
+ * Create a global admin API key (super_admin only)
+ */
+export async function createGlobalApiKey(name: string): Promise<CreateApiKeyResult> {
+  const response = await apiClient.post<ApiResponse<CreateApiKeyResult>>(
+    '/admin/global/api-keys',
+    { name }
+  );
+  return response.data.data!;
+}
+
+// =============================================================================
+// SYSTEM MONITORING
+// =============================================================================
+
+/**
+ * Get connection status for all tenants
+ */
+export async function getSystemConnections(): Promise<TenantConnectionStatus[]> {
+  const response = await apiClient.get<ApiResponse<TenantConnectionStatus[]>>(
+    '/admin/system/connections'
+  );
+  return response.data.data || [];
+}
+
+/**
+ * Get system health summary and issues
+ */
+export async function getSystemHealth(): Promise<SystemHealthResponse> {
+  const response = await apiClient.get<ApiResponse<SystemHealthResponse>>(
+    '/admin/system/health'
+  );
+  return response.data.data!;
+}
+
+/**
+ * Get tokens expiring within specified hours
+ */
+export async function getExpiringTokens(withinHours: number = 24): Promise<TokenExpiryAlert[]> {
+  const response = await apiClient.get<ApiResponse<TokenExpiryAlert[]>>(
+    `/admin/system/alerts/tokens?hours=${withinHours}`
+  );
+  return response.data.data || [];
+}
+
+/**
+ * Get recent sync failures across all organizations
+ */
+export async function getRecentSyncFailures(limit: number = 20): Promise<RecentSyncFailure[]> {
+  const response = await apiClient.get<ApiResponse<RecentSyncFailure[]>>(
+    `/admin/system/alerts/failures?limit=${limit}`
   );
   return response.data.data || [];
 }

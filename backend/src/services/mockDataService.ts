@@ -20,6 +20,7 @@ import {
   AdminUser,
   MagicLink,
 } from '../types';
+import { ApiKey, ApiUsageLog } from '../types/apiKey';
 
 // In-memory storage
 const organizations: Map<string, Organization> = new Map();
@@ -32,6 +33,8 @@ const payloads: Map<string, WebhookPayload> = new Map();
 const mappings: Map<string, MappingConfiguration> = new Map();
 const tokens: Map<string, OAuthToken> = new Map();
 const logs: Map<string, SyncLog> = new Map();
+const apiKeys: Map<string, ApiKey> = new Map();
+const apiUsageLogs: Map<string, ApiUsageLog> = new Map();
 
 // ============================================================
 // INITIALIZATION
@@ -1037,4 +1040,157 @@ export async function getTokensExpiringWithin(minutes: number): Promise<OAuthTok
   return Array.from(tokens.values()).filter(
     t => t.is_active && t.access_token_expires_at < threshold
   );
+}
+
+// ============================================================
+// API KEYS
+// ============================================================
+
+/**
+ * Create a new API key
+ */
+export async function createApiKey(apiKey: ApiKey): Promise<ApiKey> {
+  apiKeys.set(apiKey.key_id, apiKey);
+  return apiKey;
+}
+
+/**
+ * Get API key by its hash (for validation)
+ */
+export async function getApiKeyByHash(keyHash: string): Promise<ApiKey | null> {
+  for (const key of apiKeys.values()) {
+    if (key.key_hash === keyHash) {
+      return key;
+    }
+  }
+  return null;
+}
+
+/**
+ * Get API key by ID
+ */
+export async function getApiKeyById(keyId: string): Promise<ApiKey | null> {
+  return apiKeys.get(keyId) || null;
+}
+
+/**
+ * Get all API keys for an organization
+ */
+export async function getApiKeysByOrganization(organizationId: string): Promise<ApiKey[]> {
+  return Array.from(apiKeys.values())
+    .filter(k => k.organization_id === organizationId)
+    .sort((a, b) => b.created_at.getTime() - a.created_at.getTime());
+}
+
+/**
+ * Get all global admin API keys (organization_id IS NULL)
+ */
+export async function getGlobalApiKeys(): Promise<ApiKey[]> {
+  return Array.from(apiKeys.values())
+    .filter(k => k.organization_id === null)
+    .sort((a, b) => b.created_at.getTime() - a.created_at.getTime());
+}
+
+/**
+ * Update API key fields
+ */
+export async function updateApiKey(
+  keyId: string,
+  updates: Partial<Pick<ApiKey, 'is_active' | 'revoked_at' | 'revoked_by' | 'grace_period_ends_at' | 'expires_at'>>
+): Promise<void> {
+  const key = apiKeys.get(keyId);
+  if (!key) return;
+
+  if (updates.is_active !== undefined) key.is_active = updates.is_active;
+  if (updates.revoked_at !== undefined) key.revoked_at = updates.revoked_at;
+  if (updates.revoked_by !== undefined) key.revoked_by = updates.revoked_by;
+  if (updates.grace_period_ends_at !== undefined) key.grace_period_ends_at = updates.grace_period_ends_at;
+  if (updates.expires_at !== undefined) key.expires_at = updates.expires_at;
+
+  apiKeys.set(keyId, key);
+}
+
+/**
+ * Update last_used_at timestamp for an API key
+ */
+export async function updateApiKeyLastUsed(keyId: string): Promise<void> {
+  const key = apiKeys.get(keyId);
+  if (key) {
+    key.last_used_at = new Date();
+    apiKeys.set(keyId, key);
+  }
+}
+
+// ============================================================
+// API USAGE LOGS
+// ============================================================
+
+/**
+ * Log an API request
+ */
+export async function logApiUsage(log: ApiUsageLog): Promise<void> {
+  apiUsageLogs.set(log.log_id, log);
+}
+
+/**
+ * Get API usage logs for an organization
+ */
+export async function getApiUsageLogs(
+  organizationId: string,
+  options: { limit?: number; offset?: number; startDate?: Date; endDate?: Date } = {}
+): Promise<ApiUsageLog[]> {
+  const { limit = 100, offset = 0, startDate, endDate } = options;
+
+  let logs = Array.from(apiUsageLogs.values())
+    .filter(l => l.organization_id === organizationId);
+
+  if (startDate) {
+    logs = logs.filter(l => l.timestamp >= startDate);
+  }
+
+  if (endDate) {
+    logs = logs.filter(l => l.timestamp <= endDate);
+  }
+
+  return logs
+    .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+    .slice(offset, offset + limit);
+}
+
+/**
+ * Get API usage statistics for an organization
+ */
+export async function getApiUsageStats(
+  organizationId: string,
+  hoursBack: number = 24
+): Promise<{
+  total_requests: number;
+  success_count: number;
+  error_count: number;
+  avg_response_time_ms: number;
+}> {
+  const threshold = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
+
+  const logs = Array.from(apiUsageLogs.values())
+    .filter(l => l.organization_id === organizationId && l.timestamp >= threshold);
+
+  if (logs.length === 0) {
+    return {
+      total_requests: 0,
+      success_count: 0,
+      error_count: 0,
+      avg_response_time_ms: 0,
+    };
+  }
+
+  const successCount = logs.filter(l => l.status_code < 400).length;
+  const errorCount = logs.filter(l => l.status_code >= 400).length;
+  const avgResponseTime = logs.reduce((sum, l) => sum + l.response_time_ms, 0) / logs.length;
+
+  return {
+    total_requests: logs.length,
+    success_count: successCount,
+    error_count: errorCount,
+    avg_response_time_ms: avgResponseTime,
+  };
 }

@@ -4,6 +4,12 @@ import path from 'path';
 import config from './config';
 import routes from './routes';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
+import {
+  standardRateLimiter,
+  proxyRateLimiter,
+  authRateLimiter,
+  webhookRateLimiter,
+} from './middleware/rateLimit';
 
 // =============================================================================
 // GLOBAL ERROR HANDLERS
@@ -55,6 +61,22 @@ app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} ${req.method} ${req.path}`);
   next();
 });
+
+// =============================================================================
+// RATE LIMITING
+// =============================================================================
+
+// Auth endpoints - strict rate limiting (10 requests per 15 minutes)
+app.use('/api/admin/auth', authRateLimiter);
+
+// Proxy API - per API key rate limiting (60 requests per minute)
+app.use('/api/v1/org/:slug/proxy', proxyRateLimiter);
+
+// Webhook endpoints - generous rate limiting (300 requests per minute)
+app.use('/api/v1/webhook', webhookRateLimiter);
+
+// Standard rate limiting for all other API routes (100 requests per 15 minutes)
+app.use('/api', standardRateLimiter);
 
 // API Routes
 app.use('/api', routes);

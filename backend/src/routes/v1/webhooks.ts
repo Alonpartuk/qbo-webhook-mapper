@@ -12,6 +12,7 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import { tenantContext } from '../../middleware/tenantContext';
+import { validateApiKey } from '../../services/apiKeyService';
 import {
   savePayload,
   getSourceById,
@@ -67,32 +68,71 @@ router.post('/:clientSlug', tenantContext, async (req: Request, res: Response) =
       });
     }
 
-    // Find source by API key
-    const source = await getSourceByApiKey(apiKey);
+    // Try to find source by source-specific API key first
+    let source = await getSourceByApiKey(apiKey);
 
+    // If no source-specific key match, try organization API key
     if (!source) {
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid API key',
-        code: 'INVALID_API_KEY',
-      });
-    }
+      const keyValidation = await validateApiKey(apiKey);
 
-    // Verify source belongs to this organization
-    if (source.organization_id !== organization_id) {
-      return res.status(403).json({
-        success: false,
-        error: 'API key does not belong to this organization',
-        code: 'API_KEY_ORG_MISMATCH',
-      });
-    }
+      if (!keyValidation.valid || !keyValidation.key) {
+        return res.status(401).json({
+          success: false,
+          error: 'Invalid API key',
+          code: 'INVALID_API_KEY',
+        });
+      }
 
-    if (!source.is_active) {
-      return res.status(403).json({
-        success: false,
-        error: 'Source is deactivated',
-        code: 'SOURCE_INACTIVE',
-      });
+      // Verify key belongs to this organization
+      if (keyValidation.key.organization_id !== organization_id) {
+        return res.status(403).json({
+          success: false,
+          error: 'API key does not belong to this organization',
+          code: 'API_KEY_ORG_MISMATCH',
+        });
+      }
+
+      // For org-level API keys, use the first active source (or accept without specific source)
+      const orgSources = await getSources(organization_id);
+      const activeSource = orgSources.find(s => s.is_active);
+
+      if (activeSource) {
+        source = activeSource;
+      } else {
+        // No sources configured - still accept the webhook for later processing
+        const savedPayload = await savePayload(
+          organization_id,
+          'default',
+          req.body,
+          req.headers as Record<string, string>
+        );
+
+        return res.status(202).json({
+          success: true,
+          data: {
+            payloadId: savedPayload.payload_id,
+            processed: false,
+            message: 'Webhook received but no sources configured',
+          },
+        });
+      }
+    } else {
+      // Verify source-specific key belongs to this organization
+      if (source.organization_id !== organization_id) {
+        return res.status(403).json({
+          success: false,
+          error: 'API key does not belong to this organization',
+          code: 'API_KEY_ORG_MISMATCH',
+        });
+      }
+
+      if (!source.is_active) {
+        return res.status(403).json({
+          success: false,
+          error: 'Source is deactivated',
+          code: 'SOURCE_INACTIVE',
+        });
+      }
     }
 
     // Process the webhook

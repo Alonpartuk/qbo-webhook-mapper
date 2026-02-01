@@ -1,70 +1,94 @@
-name: Deploy to Cloud Run
+name: Build & Deploy
 
 on:
   push:
-    branches:
-      - main
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
 
 env:
-  PROJECT_ID: octup-testing
-  REGION: us-central1
-  BACKEND_SERVICE: qbo-webhook-mapper-backend
-  FRONTEND_SERVICE: qbo-webhook-mapper-frontend
+  NODE_VERSION: '18'
 
 jobs:
-  deploy-backend:
-    name: Deploy Backend
+  # Build and test backend
+  build-backend:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
 
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
-        with:
-          project_id: ${{ env.PROJECT_ID }}
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Deploy Backend to Cloud Run
-        run: |
-          gcloud run deploy ${{ env.BACKEND_SERVICE }} \
-            --source ./backend \
-            --region ${{ env.REGION }} \
-            --platform managed \
-            --allow-unauthenticated \
-            --clear-base-image \
-            --quiet
+      - name: Type check
+        run: npm run build
 
-  deploy-frontend:
-    name: Deploy Frontend
+      - name: Run tests
+        run: npm test --if-present
+        env:
+          USE_MOCK_DATA: 'true'
+          JWT_SECRET: 'test-secret'
+          ENCRYPTION_KEY: 'test-encryption-key-32-chars-ok'
+
+  # Build frontend
+  build-frontend:
     runs-on: ubuntu-latest
-    needs: deploy-backend
+    defaults:
+      run:
+        working-directory: frontend
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
 
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
-        with:
-          project_id: ${{ env.PROJECT_ID }}
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Deploy Frontend to Cloud Run
-        run: |
-          gcloud run deploy ${{ env.FRONTEND_SERVICE }} \
-            --source ./frontend \
-            --region ${{ env.REGION }} \
-            --platform managed \
-            --allow-unauthenticated \
-            --clear-base-image \
-            --quiet
+      - name: Build
+        run: npm run build
+        env:
+          VITE_API_BASE_URL: ${{ vars.API_BASE_URL || 'https://api.example.com' }}
+
+  # Deploy to Railway (only on push to main)
+  deploy-railway:
+    needs: [build-backend, build-frontend]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy to Railway
+        run: railway up --detach
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+
+  # Alternative: Deploy to Render (uncomment if using Render instead)
+  # deploy-render:
+  #   needs: [build-backend, build-frontend]
+  #   runs-on: ubuntu-latest
+  #   if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+  #
+  #   steps:
+  #     - name: Trigger Render Deploy
+  #       run: |
+  #         curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
