@@ -18,14 +18,12 @@ import {
   GlobalMappingTemplate,
   ClientMappingOverride,
   AdminUser,
-  MagicLink,
 } from '../types';
 import { ApiKey, ApiUsageLog } from '../types/apiKey';
 
 const TABLES = {
   ORGANIZATIONS: 'organizations',
   ADMIN_USERS: 'admin_users',
-  MAGIC_LINKS: 'magic_links',
   GLOBAL_TEMPLATES: 'global_mapping_templates',
   CLIENT_OVERRIDES: 'client_mapping_overrides',
   SOURCES: 'webhook_sources',
@@ -173,6 +171,7 @@ export async function getAdminUserByEmail(email: string): Promise<AdminUser | nu
 
 export async function createAdminUser(
   email: string,
+  passwordHash: string,
   name?: string,
   role: AdminUser['role'] = 'admin'
 ): Promise<AdminUser> {
@@ -180,6 +179,8 @@ export async function createAdminUser(
     user_id: uuidv4(),
     email,
     name,
+    password_hash: passwordHash,
+    must_change_password: true,
     role,
     is_active: true,
     created_at: new Date(),
@@ -190,6 +191,8 @@ export async function createAdminUser(
     user_id: user.user_id,
     email: user.email,
     name: user.name || null,
+    password_hash: user.password_hash,
+    must_change_password: user.must_change_password,
     role: user.role,
     is_active: user.is_active,
     last_login_at: null,
@@ -226,56 +229,6 @@ export async function updateAdminUser(userId: string, updates: Partial<AdminUser
     WHERE user_id = @userId
   `;
   await runQuery(query, params);
-}
-
-// ============================================================
-// MAGIC LINKS
-// ============================================================
-
-export async function createMagicLink(
-  email: string,
-  tokenHash: string,
-  expiresAt: Date
-): Promise<MagicLink> {
-  const link: MagicLink = {
-    link_id: uuidv4(),
-    email,
-    token_hash: tokenHash,
-    expires_at: expiresAt,
-    created_at: new Date(),
-  };
-
-  const table = dataset.table(TABLES.MAGIC_LINKS);
-  await table.insert([{
-    link_id: link.link_id,
-    email: link.email,
-    token_hash: link.token_hash,
-    expires_at: link.expires_at.toISOString(),
-    used_at: null,
-    created_at: link.created_at.toISOString(),
-  }]);
-
-  return link;
-}
-
-export async function getMagicLinkByToken(tokenHash: string): Promise<MagicLink | null> {
-  const query = `
-    SELECT * FROM ${tablePath(TABLES.MAGIC_LINKS)}
-    WHERE token_hash = @tokenHash
-      AND used_at IS NULL
-      AND expires_at > CURRENT_TIMESTAMP()
-  `;
-  const rows = await runQuery<MagicLink>(query, { tokenHash });
-  return rows[0] || null;
-}
-
-export async function markMagicLinkUsed(linkId: string): Promise<void> {
-  const query = `
-    UPDATE ${tablePath(TABLES.MAGIC_LINKS)}
-    SET used_at = CURRENT_TIMESTAMP()
-    WHERE link_id = @linkId
-  `;
-  await runQuery(query, { linkId });
 }
 
 // ============================================================
@@ -1190,27 +1143,6 @@ export async function updateAdminLastLogin(userId: string): Promise<void> {
     WHERE user_id = @userId
   `;
   await runQuery(query, { userId });
-}
-
-// ============================================================
-// ADDITIONAL MAGIC LINK FUNCTIONS
-// ============================================================
-
-export async function cleanupExpiredMagicLinks(): Promise<number> {
-  const countQuery = `
-    SELECT COUNT(*) as count FROM ${tablePath(TABLES.MAGIC_LINKS)}
-    WHERE expires_at < CURRENT_TIMESTAMP() AND used_at IS NULL
-  `;
-  const countResult = await runQuery<{ count: number }>(countQuery);
-  const deletedCount = countResult[0]?.count || 0;
-
-  const deleteQuery = `
-    DELETE FROM ${tablePath(TABLES.MAGIC_LINKS)}
-    WHERE expires_at < CURRENT_TIMESTAMP() AND used_at IS NULL
-  `;
-  await runQuery(deleteQuery);
-
-  return deletedCount;
 }
 
 // ============================================================

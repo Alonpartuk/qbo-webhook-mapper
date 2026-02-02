@@ -18,14 +18,12 @@ import {
   GlobalMappingTemplate,
   ClientMappingOverride,
   AdminUser,
-  MagicLink,
 } from '../types';
 import { ApiKey, ApiUsageLog } from '../types/apiKey';
 
 // In-memory storage
 const organizations: Map<string, Organization> = new Map();
 const adminUsers: Map<string, AdminUser> = new Map();
-const magicLinks: Map<string, MagicLink> = new Map();
 const globalTemplates: Map<string, GlobalMappingTemplate> = new Map();
 const clientOverrides: Map<string, ClientMappingOverride> = new Map();
 const sources: Map<string, WebhookSource> = new Map();
@@ -531,35 +529,6 @@ export async function updateAdminUser(userId: string, updates: Partial<AdminUser
 }
 
 // ============================================================
-// MAGIC LINKS
-// ============================================================
-
-export async function createMagicLink(email: string, tokenHash: string, expiresAt: Date): Promise<MagicLink> {
-  const link: MagicLink = {
-    link_id: uuidv4(),
-    email,
-    token_hash: tokenHash,
-    expires_at: expiresAt,
-    created_at: new Date(),
-  };
-  magicLinks.set(link.link_id, link);
-  return link;
-}
-
-export async function getMagicLinkByToken(tokenHash: string): Promise<MagicLink | null> {
-  return Array.from(magicLinks.values()).find(
-    l => l.token_hash === tokenHash && !l.used_at && l.expires_at > new Date()
-  ) || null;
-}
-
-export async function markMagicLinkUsed(linkId: string): Promise<void> {
-  const link = magicLinks.get(linkId);
-  if (link) {
-    magicLinks.set(linkId, { ...link, used_at: new Date() });
-  }
-}
-
-// ============================================================
 // GLOBAL MAPPING TEMPLATES
 // ============================================================
 
@@ -1005,22 +974,6 @@ export async function updateAdminLastLogin(userId: string): Promise<void> {
     user.last_login_at = new Date();
     adminUsers.set(userId, user);
   }
-}
-
-// ============================================================
-// ADDITIONAL MAGIC LINK FUNCTIONS
-// ============================================================
-
-export async function cleanupExpiredMagicLinks(): Promise<number> {
-  const now = new Date();
-  let deleted = 0;
-  for (const [linkId, link] of magicLinks) {
-    if (link.expires_at < now) {
-      magicLinks.delete(linkId);
-      deleted++;
-    }
-  }
-  return deleted;
 }
 
 // ============================================================
