@@ -496,7 +496,7 @@ export async function resetUserPassword(userId: string): Promise<UserManagementR
 
 export interface AuditLog {
   log_id: string;
-  timestamp: string;
+  timestamp: string | { value: string };  // BigQuery returns {value: "..."}
   category: string;
   action: string;
   result: 'success' | 'failure' | 'error';

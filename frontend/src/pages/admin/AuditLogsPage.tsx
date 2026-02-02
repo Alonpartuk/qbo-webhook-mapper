@@ -154,8 +154,12 @@ export default function AuditLogsPage() {
     return colors[category] || 'bg-gray-100 text-gray-700';
   };
 
-  const formatTimestamp = (timestamp: string) => {
-    const date = new Date(timestamp);
+  const formatTimestamp = (timestamp: string | { value: string }) => {
+    // Handle BigQuery timestamp format {value: "..."} or plain string
+    const dateStr = typeof timestamp === 'object' && timestamp?.value
+      ? timestamp.value
+      : timestamp;
+    const date = new Date(dateStr);
     return date.toLocaleString();
   };
 
