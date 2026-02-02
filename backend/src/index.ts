@@ -10,6 +10,7 @@ import {
   authRateLimiter,
   webhookRateLimiter,
 } from './middleware/rateLimit';
+import { logEnvWarnings } from './utils/envCheck';
 
 // =============================================================================
 // GLOBAL ERROR HANDLERS
@@ -123,6 +124,9 @@ app.listen(config.port, () => {
 ║  QBO Env:     ${config.qbo.environment.padEnd(12)}                        ║
 ╚═══════════════════════════════════════════════════════════╝
   `);
+
+  // Log environment configuration warnings
+  logEnvWarnings();
 });
 
 export default app;

@@ -22,14 +22,18 @@ import {
   Database,
   Download,
   Search,
+  Code2,
+  GitBranch,
 } from 'lucide-react';
 import { exportToCsv, customerCsvColumns, itemCsvColumns } from '../../utils/csvExport';
-import { Organization, OrganizationStats, OrgConnectionStatus, WebhookSource, WebhookPayload, ClientMappingOverride, FieldMapping } from '../../types';
+import { Organization, OrganizationStats, OrgConnectionStatus, WebhookSource, WebhookPayload, ClientMappingOverride, FieldMapping, QBOCustomer, QBOItem } from '../../types';
 import * as adminApi from '../../api/admin';
 import ApiKeyManager from '../../components/settings/ApiKeyManager';
+import VisualMapper from '../../components/mappings/VisualMapper';
+import DeveloperHub from '../DeveloperHub';
 
 type LoadingState = 'idle' | 'loading' | 'success' | 'error';
-type TabType = 'overview' | 'settings' | 'mappings' | 'apiKeys' | 'data';
+type TabType = 'overview' | 'settings' | 'mappings' | 'visualMapper' | 'apiKeys' | 'data' | 'developer';
 
 // QBO Entity types for data tab
 type EntityType = 'customers' | 'items' | 'invoices' | 'accounts' | 'vendors';
@@ -307,6 +311,12 @@ export default function OrgDetailPage() {
               label="Mappings"
             />
             <TabButton
+              active={activeTab === 'visualMapper'}
+              onClick={() => setActiveTab('visualMapper')}
+              icon={<GitBranch className="w-4 h-4" />}
+              label="Visual Mapper"
+            />
+            <TabButton
               active={activeTab === 'apiKeys'}
               onClick={() => setActiveTab('apiKeys')}
               icon={<Key className="w-4 h-4" />}
@@ -317,6 +327,12 @@ export default function OrgDetailPage() {
               onClick={() => setActiveTab('data')}
               icon={<Database className="w-4 h-4" />}
               label="Data"
+            />
+            <TabButton
+              active={activeTab === 'developer'}
+              onClick={() => setActiveTab('developer')}
+              icon={<Code2 className="w-4 h-4" />}
+              label="Developer"
             />
           </div>
         </div>
@@ -356,6 +372,24 @@ export default function OrgDetailPage() {
             mappings={mappings}
             loading={loadingMappings}
             onRefresh={loadMappingsData}
+          />
+        )}
+
+        {activeTab === 'visualMapper' && organization && (
+          <VisualMapperTab
+            organization={organization}
+            sources={sources}
+            selectedSourceId={selectedSourceId}
+            onSelectSource={setSelectedSourceId}
+            latestPayload={latestPayload}
+            onRefresh={loadMappingsData}
+          />
+        )}
+
+        {activeTab === 'developer' && organization && (
+          <DeveloperHub
+            orgSlug={organization.slug}
+            baseUrl={import.meta.env.VITE_API_URL || ''}
           />
         )}
 
@@ -975,6 +1009,170 @@ function MappingsTab({
             </button>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function VisualMapperTab({
+  organization,
+  sources,
+  selectedSourceId,
+  onSelectSource,
+  latestPayload,
+  onRefresh,
+}: {
+  organization: Organization;
+  sources: WebhookSource[];
+  selectedSourceId: string | null;
+  onSelectSource: (id: string) => void;
+  latestPayload: WebhookPayload | null;
+  onRefresh: () => void;
+}) {
+  // Parse the latest payload
+  let parsedPayload: Record<string, unknown> | null = null;
+  if (latestPayload?.raw_payload) {
+    try {
+      parsedPayload = typeof latestPayload.raw_payload === 'string'
+        ? JSON.parse(latestPayload.raw_payload)
+        : latestPayload.raw_payload as Record<string, unknown>;
+    } catch {
+      parsedPayload = null;
+    }
+  }
+
+  // Fetch customers from QBO proxy
+  const fetchCustomers = async (search?: string): Promise<QBOCustomer[]> => {
+    try {
+      const baseUrl = import.meta.env.VITE_API_URL || '';
+      const params = new URLSearchParams({ type: 'customers' });
+      if (search) params.append('search', search);
+
+      const response = await fetch(
+        `${baseUrl}/api/v1/org/${organization.slug}/proxy/data?${params}`,
+        { credentials: 'include' }
+      );
+
+      if (!response.ok) return [];
+      const data = await response.json();
+      return (data.data || []).map((c: Record<string, unknown>) => ({
+        id: String(c.Id || ''),
+        name: String(c.DisplayName || c.FullyQualifiedName || ''),
+        email: (c.PrimaryEmailAddr as Record<string, string>)?.Address,
+      }));
+    } catch {
+      return [];
+    }
+  };
+
+  // Fetch items from QBO proxy
+  const fetchItems = async (search?: string): Promise<QBOItem[]> => {
+    try {
+      const baseUrl = import.meta.env.VITE_API_URL || '';
+      const params = new URLSearchParams({ type: 'items' });
+      if (search) params.append('search', search);
+
+      const response = await fetch(
+        `${baseUrl}/api/v1/org/${organization.slug}/proxy/data?${params}`,
+        { credentials: 'include' }
+      );
+
+      if (!response.ok) return [];
+      const data = await response.json();
+      return (data.data || []).map((i: Record<string, unknown>) => ({
+        id: String(i.Id || ''),
+        name: String(i.Name || ''),
+        type: String(i.Type || 'Service'),
+        unitPrice: i.UnitPrice != null ? Number(i.UnitPrice) : undefined,
+      }));
+    } catch {
+      return [];
+    }
+  };
+
+  // Save mapping
+  const handleSave = async (mappings: FieldMapping[]) => {
+    if (!selectedSourceId) return;
+
+    try {
+      // Check if override exists
+      const overrides = await adminApi.getClientOverrides(organization.organization_id);
+      const existingOverride = overrides.find(o => o.source_id === selectedSourceId);
+
+      if (existingOverride) {
+        await adminApi.updateClientOverride(organization.organization_id, existingOverride.override_id, {
+          field_mappings: mappings,
+        });
+      } else {
+        const source = sources.find(s => s.source_id === selectedSourceId);
+        await adminApi.createClientOverride(organization.organization_id, {
+          name: `${source?.name || 'Source'} Mapping`,
+          source_id: selectedSourceId,
+          field_mappings: mappings,
+        });
+      }
+      onRefresh();
+    } catch (error) {
+      console.error('Failed to save mapping:', error);
+      throw error;
+    }
+  };
+
+  if (sources.length === 0) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
+        <GitBranch className="w-12 h-12 text-gray-300 mx-auto" />
+        <h3 className="mt-4 text-lg font-medium text-gray-900">No Webhook Sources</h3>
+        <p className="mt-2 text-gray-500">
+          Create a webhook source first to use the Visual Mapper.
+        </p>
+        <Link
+          to={`/admin/organizations/${organization.organization_id}/sources`}
+          className="inline-flex items-center gap-2 mt-4 px-4 py-2 text-sm font-medium text-white bg-gray-900 rounded-lg hover:bg-gray-800"
+        >
+          Manage Sources
+        </Link>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Source Selector */}
+      <div className="bg-white rounded-xl border border-gray-200 p-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <label className="text-sm font-medium text-gray-700">Source:</label>
+            <select
+              value={selectedSourceId || ''}
+              onChange={(e) => onSelectSource(e.target.value)}
+              className="px-3 py-2 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              {sources.map(source => (
+                <option key={source.source_id} value={source.source_id}>
+                  {source.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            onClick={onRefresh}
+            className="inline-flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:text-gray-900"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {/* Visual Mapper */}
+      <div className="h-[600px]">
+        <VisualMapper
+          sourcePayload={parsedPayload}
+          onSave={handleSave}
+          fetchCustomers={fetchCustomers}
+          fetchItems={fetchItems}
+        />
       </div>
     </div>
   );
