@@ -19,6 +19,7 @@ import {
 } from '../services/apiKeyService';
 import { ApiKeyContext, ApiKeyType } from '../types/apiKey';
 import { setErrorCode } from './requestLogger';
+import * as auditLog from '../services/auditLogService';
 
 // Header name for API key
 const API_KEY_HEADER = 'x-api-key';
@@ -81,6 +82,18 @@ export function requireApiKey(
 
     if (!validation.valid || !validation.key) {
       setErrorCode(res, 'ERR_INVALID_API_KEY');
+
+      // Log failed API key usage
+      auditLog.logApiKey('api_key_used', 'failure', {
+        actorType: 'api_key',
+        apiKeyId: 'unknown',
+        ip: req.ip || req.socket.remoteAddress,
+        userAgent: req.headers['user-agent'],
+        requestPath: req.path,
+        requestMethod: req.method,
+        errorMessage: validation.error || 'Invalid API key',
+      });
+
       res.status(401).json({
         success: false,
         error: validation.error || 'Invalid API key',
@@ -92,6 +105,19 @@ export function requireApiKey(
     // Check if key type is allowed
     if (allowedTypes && !allowedTypes.includes(validation.key.key_type)) {
       setErrorCode(res, 'ERR_KEY_TYPE_NOT_ALLOWED');
+
+      // Log unauthorized key type usage
+      auditLog.logApiKey('api_key_used', 'failure', {
+        actorType: 'api_key',
+        apiKeyId: validation.key.key_id,
+        organizationId: validation.key.organization_id || undefined,
+        ip: req.ip || req.socket.remoteAddress,
+        userAgent: req.headers['user-agent'],
+        requestPath: req.path,
+        requestMethod: req.method,
+        errorMessage: `Key type '${validation.key.key_type}' not allowed`,
+      });
+
       res.status(403).json({
         success: false,
         error: `API key type '${validation.key.key_type}' not allowed for this endpoint`,
@@ -99,6 +125,17 @@ export function requireApiKey(
       });
       return;
     }
+
+    // Log successful API key usage
+    auditLog.logApiKey('api_key_used', 'success', {
+      actorType: 'api_key',
+      apiKeyId: validation.key.key_id,
+      organizationId: validation.key.organization_id || undefined,
+      ip: req.ip || req.socket.remoteAddress,
+      userAgent: req.headers['user-agent'],
+      requestPath: req.path,
+      requestMethod: req.method,
+    });
 
     // Attach context to request
     req.apiKeyContext = buildKeyContext(validation.key);

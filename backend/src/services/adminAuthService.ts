@@ -14,6 +14,7 @@ import {
   updateAdminLastLogin,
 } from './dataService';
 import { AdminUser } from '../types';
+import * as auditLog from './auditLogService';
 
 // Configuration
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -75,21 +76,40 @@ export async function loginAdmin(email: string, password: string): Promise<{
   // Find user by email
   const user = await getAdminUserByEmail(email.toLowerCase());
   if (!user) {
+    auditLog.logAuth('login_failed', 'failure', {
+      email: email.toLowerCase(),
+      errorMessage: 'User not found',
+    });
     return { success: false, message: 'Invalid email or password' };
   }
 
   // Check if user is active
   if (!user.is_active) {
+    auditLog.logAuth('login_failed', 'failure', {
+      userId: user.user_id,
+      email: user.email,
+      errorMessage: 'Account deactivated',
+    });
     return { success: false, message: 'Account is deactivated' };
   }
 
   // Verify password
   if (!user.password_hash) {
+    auditLog.logAuth('login_failed', 'failure', {
+      userId: user.user_id,
+      email: user.email,
+      errorMessage: 'No password hash configured',
+    });
     return { success: false, message: 'Account not properly configured. Contact administrator.' };
   }
 
   const passwordValid = await verifyPassword(password, user.password_hash);
   if (!passwordValid) {
+    auditLog.logAuth('login_failed', 'failure', {
+      userId: user.user_id,
+      email: user.email,
+      errorMessage: 'Invalid password',
+    });
     return { success: false, message: 'Invalid email or password' };
   }
 
@@ -106,6 +126,12 @@ export async function loginAdmin(email: string, password: string): Promise<{
     EFFECTIVE_JWT_SECRET,
     { expiresIn: JWT_EXPIRATION }
   );
+
+  // Log successful login
+  auditLog.logAuth('login_success', 'success', {
+    userId: user.user_id,
+    email: user.email,
+  });
 
   // Return user without password_hash
   const { password_hash, ...safeUser } = user;
@@ -158,6 +184,12 @@ export async function changePassword(
   await updateAdminUser(userId, {
     password_hash: newHash,
     must_change_password: false,
+  });
+
+  // Log password change
+  auditLog.logAuth('password_change', 'success', {
+    userId: user.user_id,
+    email: user.email,
   });
 
   return { success: true, message: 'Password changed successfully' };

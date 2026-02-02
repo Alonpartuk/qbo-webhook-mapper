@@ -171,16 +171,17 @@ export async function getAdminUserByEmail(email: string): Promise<AdminUser | nu
 
 export async function createAdminUser(
   email: string,
-  passwordHash: string,
   name?: string,
-  role: AdminUser['role'] = 'admin'
+  role: AdminUser['role'] = 'admin',
+  passwordHash?: string,
+  mustChangePassword: boolean = true
 ): Promise<AdminUser> {
   const user: AdminUser = {
     user_id: uuidv4(),
     email,
     name,
-    password_hash: passwordHash,
-    must_change_password: true,
+    password_hash: passwordHash || '',
+    must_change_password: mustChangePassword,
     role,
     is_active: true,
     created_at: new Date(),
@@ -1508,4 +1509,161 @@ export async function getApiUsageStats(
     error_count: 0,
     avg_response_time_ms: 0,
   };
+}
+
+// ============================================================
+// AUDIT LOGS
+// ============================================================
+
+import { AuditLog, AuditLogFilters, AuditLogResponse } from '../types/auditLog';
+
+/**
+ * Insert multiple audit logs (batch insert from queue flush)
+ */
+export async function insertAuditLogs(logs: AuditLog[]): Promise<void> {
+  if (logs.length === 0) return;
+
+  const rows = logs.map((log) => ({
+    log_id: log.log_id,
+    timestamp: log.timestamp,
+    category: log.category,
+    action: log.action,
+    result: log.result,
+    actor_type: log.actor_type,
+    actor_id: log.actor_id,
+    actor_email: log.actor_email,
+    actor_ip: log.actor_ip,
+    target_type: log.target_type,
+    target_id: log.target_id,
+    organization_id: log.organization_id,
+    details: JSON.stringify(log.details),
+    error_message: log.error_message,
+    user_agent: log.user_agent,
+    request_path: log.request_path,
+    request_method: log.request_method,
+  }));
+
+  await bigquery
+    .dataset(config.bigquery.dataset)
+    .table('audit_logs')
+    .insert(rows);
+}
+
+/**
+ * Query audit logs with filters
+ */
+export async function queryAuditLogs(filters: AuditLogFilters): Promise<AuditLogResponse> {
+  let query = `SELECT * FROM \`${config.bigquery.projectId}.${config.bigquery.dataset}.audit_logs\` WHERE 1=1`;
+  const params: Record<string, unknown> = {};
+
+  if (filters.start_date) {
+    query += ' AND timestamp >= @startDate';
+    params.startDate = filters.start_date;
+  }
+
+  if (filters.end_date) {
+    query += ' AND timestamp <= @endDate';
+    params.endDate = filters.end_date;
+  }
+
+  if (filters.category) {
+    const categories = Array.isArray(filters.category) ? filters.category : [filters.category];
+    query += ' AND category IN UNNEST(@categories)';
+    params.categories = categories;
+  }
+
+  if (filters.action) {
+    const actions = Array.isArray(filters.action) ? filters.action : [filters.action];
+    query += ' AND action IN UNNEST(@actions)';
+    params.actions = actions;
+  }
+
+  if (filters.result) {
+    query += ' AND result = @result';
+    params.result = filters.result;
+  }
+
+  if (filters.actor_type) {
+    query += ' AND actor_type = @actorType';
+    params.actorType = filters.actor_type;
+  }
+
+  if (filters.actor_id) {
+    query += ' AND actor_id = @actorId';
+    params.actorId = filters.actor_id;
+  }
+
+  if (filters.actor_email) {
+    query += ' AND actor_email = @actorEmail';
+    params.actorEmail = filters.actor_email;
+  }
+
+  if (filters.organization_id) {
+    query += ' AND organization_id = @organizationId';
+    params.organizationId = filters.organization_id;
+  }
+
+  // Get total count
+  const countQuery = query.replace('SELECT *', 'SELECT COUNT(*) as total');
+  const countRows = await runQuery<{ total: number }>(countQuery, params);
+  const total = countRows[0]?.total || 0;
+
+  // Add ordering and pagination
+  query += ' ORDER BY timestamp DESC';
+  const limit = filters.limit || 50;
+  const offset = filters.offset || 0;
+  query += ` LIMIT ${limit} OFFSET ${offset}`;
+
+  const rows = await runQuery<AuditLog>(query, params);
+
+  return {
+    logs: rows.map((row) => ({
+      ...row,
+      details: typeof row.details === 'string' ? JSON.parse(row.details) : row.details,
+    })),
+    total,
+    limit,
+    offset,
+    has_more: offset + rows.length < total,
+  };
+}
+
+// ============================================================
+// ADDITIONAL ADMIN USER FUNCTIONS
+// ============================================================
+
+/**
+ * Get all admin users (including inactive for user management)
+ */
+export async function getAllAdminUsers(): Promise<AdminUser[]> {
+  const query = `
+    SELECT * FROM \`${config.bigquery.projectId}.${config.bigquery.dataset}.admin_users\`
+    ORDER BY created_at DESC
+  `;
+  return runQuery<AdminUser>(query);
+}
+
+/**
+ * Delete an admin user (soft delete by setting is_active = false)
+ */
+export async function deleteAdminUser(userId: string): Promise<void> {
+  const query = `
+    UPDATE \`${config.bigquery.projectId}.${config.bigquery.dataset}.admin_users\`
+    SET is_active = FALSE
+    WHERE user_id = @userId
+  `;
+  await runQuery(query, { userId });
+}
+
+/**
+ * Count active super admins
+ */
+export async function countSuperAdmins(): Promise<number> {
+  const query = `
+    SELECT COUNT(*) as count
+    FROM \`${config.bigquery.projectId}.${config.bigquery.dataset}.admin_users\`
+    WHERE role = 'super_admin' AND is_active = TRUE
+  `;
+  const rows = await runQuery<{ count: number }>(query);
+  return rows[0]?.count || 0;
 }

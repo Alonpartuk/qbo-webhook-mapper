@@ -130,6 +130,19 @@ export const {
   getApiUsageStats,
 } = dataService;
 
+// --- Audit Logs ---
+export const {
+  insertAuditLogs,
+  queryAuditLogs,
+} = dataService;
+
+// --- Additional Admin User Functions ---
+export const {
+  getAllAdminUsers,
+  deleteAdminUser,
+  countSuperAdmins,
+} = dataService;
+
 // =============================================================================
 // LEGACY BACKWARD COMPATIBILITY FUNCTIONS
 // These use DEFAULT_ORGANIZATION_ID for routes that don't specify an org
