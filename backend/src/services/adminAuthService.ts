@@ -16,7 +16,11 @@ import {
 import { AdminUser } from '../types';
 
 // Configuration
-const JWT_SECRET = process.env.JWT_SECRET || 'admin-jwt-secret-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET && process.env.NODE_ENV === 'production') {
+  throw new Error('CRITICAL: JWT_SECRET environment variable is required in production');
+}
+const EFFECTIVE_JWT_SECRET = JWT_SECRET || 'dev-only-secret-not-for-production';
 const JWT_EXPIRATION = '12h'; // 12 hours for admin sessions
 const BCRYPT_ROUNDS = 10;
 
@@ -99,7 +103,7 @@ export async function loginAdmin(email: string, password: string): Promise<{
       email: user.email,
       role: user.role,
     },
-    JWT_SECRET,
+    EFFECTIVE_JWT_SECRET,
     { expiresIn: JWT_EXPIRATION }
   );
 
@@ -167,7 +171,7 @@ export function verifyJwt(token: string): {
   payload?: { userId: string; email: string; role: string };
 } {
   try {
-    const payload = jwt.verify(token, JWT_SECRET) as {
+    const payload = jwt.verify(token, EFFECTIVE_JWT_SECRET) as {
       userId: string;
       email: string;
       role: string;
@@ -216,7 +220,7 @@ export function refreshJwt(token: string): {
       email: payload.email,
       role: payload.role,
     },
-    JWT_SECRET,
+    EFFECTIVE_JWT_SECRET,
     { expiresIn: JWT_EXPIRATION }
   );
 
