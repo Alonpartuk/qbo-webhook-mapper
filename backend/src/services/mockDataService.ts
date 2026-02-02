@@ -20,9 +20,11 @@ import {
   AdminUser,
 } from '../types';
 import { ApiKey, ApiUsageLog } from '../types/apiKey';
+import { AuditLog, AuditLogFilters, AuditLogResponse } from '../types/auditLog';
 
 // In-memory storage
 const organizations: Map<string, Organization> = new Map();
+const auditLogs: Map<string, AuditLog> = new Map();
 const adminUsers: Map<string, AdminUser> = new Map();
 const globalTemplates: Map<string, GlobalMappingTemplate> = new Map();
 const clientOverrides: Map<string, ClientMappingOverride> = new Map();
@@ -1157,4 +1159,113 @@ export async function getApiUsageStats(
     error_count: errorCount,
     avg_response_time_ms: avgResponseTime,
   };
+}
+
+// ============================================================
+// AUDIT LOGS
+// ============================================================
+
+/**
+ * Insert multiple audit logs (batch insert from queue flush)
+ */
+export async function insertAuditLogs(logs: AuditLog[]): Promise<void> {
+  for (const log of logs) {
+    auditLogs.set(log.log_id, log);
+  }
+}
+
+/**
+ * Query audit logs with filters
+ */
+export async function queryAuditLogs(filters: AuditLogFilters): Promise<AuditLogResponse> {
+  let result = Array.from(auditLogs.values());
+
+  // Apply filters
+  if (filters.start_date) {
+    result = result.filter(l => l.timestamp >= filters.start_date!);
+  }
+
+  if (filters.end_date) {
+    result = result.filter(l => l.timestamp <= filters.end_date!);
+  }
+
+  if (filters.category) {
+    const categories = Array.isArray(filters.category) ? filters.category : [filters.category];
+    result = result.filter(l => categories.includes(l.category));
+  }
+
+  if (filters.action) {
+    const actions = Array.isArray(filters.action) ? filters.action : [filters.action];
+    result = result.filter(l => actions.includes(l.action));
+  }
+
+  if (filters.result) {
+    result = result.filter(l => l.result === filters.result);
+  }
+
+  if (filters.actor_type) {
+    result = result.filter(l => l.actor_type === filters.actor_type);
+  }
+
+  if (filters.actor_id) {
+    result = result.filter(l => l.actor_id === filters.actor_id);
+  }
+
+  if (filters.actor_email) {
+    result = result.filter(l => l.actor_email === filters.actor_email);
+  }
+
+  if (filters.target_type) {
+    result = result.filter(l => l.target_type === filters.target_type);
+  }
+
+  if (filters.target_id) {
+    result = result.filter(l => l.target_id === filters.target_id);
+  }
+
+  if (filters.organization_id) {
+    result = result.filter(l => l.organization_id === filters.organization_id);
+  }
+
+  // Sort by timestamp descending (newest first)
+  result.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+
+  // Get total before pagination
+  const total = result.length;
+
+  // Apply pagination
+  const limit = filters.limit || 50;
+  const offset = filters.offset || 0;
+  result = result.slice(offset, offset + limit);
+
+  return {
+    logs: result,
+    total,
+    limit,
+    offset,
+    has_more: offset + result.length < total,
+  };
+}
+
+/**
+ * Get all admin users (including inactive for user management)
+ */
+export async function getAllAdminUsers(): Promise<AdminUser[]> {
+  return Array.from(adminUsers.values());
+}
+
+/**
+ * Delete an admin user (hard delete for mock service)
+ */
+export async function deleteAdminUser(userId: string): Promise<void> {
+  adminUsers.delete(userId);
+}
+
+/**
+ * Count super admins
+ */
+export async function countSuperAdmins(): Promise<number> {
+  return Array.from(adminUsers.values())
+    .filter(u => u.role === 'super_admin' && u.is_active)
+    .length;
 }

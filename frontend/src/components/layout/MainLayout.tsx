@@ -10,6 +10,8 @@ import {
   ArrowRightOnRectangleIcon,
   CodeBracketIcon,
   ComputerDesktopIcon,
+  UsersIcon,
+  ClipboardDocumentListIcon,
 } from '@heroicons/react/24/outline';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -30,6 +32,8 @@ const navigation: NavItem[] = [
 
 const adminNavigation: NavItem[] = [
   { name: 'Organizations', href: '/admin', icon: BuildingOffice2Icon, section: 'admin' },
+  { name: 'Users', href: '/admin/users', icon: UsersIcon, section: 'admin' },
+  { name: 'Audit Logs', href: '/admin/audit-logs', icon: ClipboardDocumentListIcon, section: 'admin' },
   { name: 'System Status', href: '/admin/system', icon: ComputerDesktopIcon, section: 'admin' },
   { name: 'Developer Hub', href: '/developer', icon: CodeBracketIcon, section: 'admin' },
 ];

@@ -7,6 +7,7 @@ import {
   updateToken,
   DEFAULT_ORGANIZATION_ID,
 } from './dataService';
+import * as auditLog from './auditLogService';
 
 // Initialize OAuth client
 const oauthClient = new OAuthClient({
@@ -63,6 +64,13 @@ export async function handleCallback(url: string): Promise<{
     token_type: token.token_type || 'Bearer',
     scope: Array.isArray(token.scope) ? token.scope.join(' ') : token.scope,
     is_active: true,
+  });
+
+  // Log successful QBO connection
+  auditLog.logQbo('qbo_connect_success', 'success', {
+    actorType: 'system',
+    organizationId: DEFAULT_ORGANIZATION_ID,
+    details: { realm_id: realmId },
   });
 
   return {
@@ -126,12 +134,28 @@ export async function getValidToken(): Promise<{
       access_token_expires_at: newAccessTokenExpiresAt,
     });
 
+    // Log successful token refresh
+    auditLog.logQbo('qbo_token_refresh', 'success', {
+      actorType: 'system',
+      organizationId: DEFAULT_ORGANIZATION_ID,
+      details: { realm_id: storedToken.realm_id },
+    });
+
     return {
       accessToken: newToken.access_token,
       realmId: storedToken.realm_id,
     };
   } catch (error) {
     console.error('Failed to refresh token:', error);
+
+    // Log failed token refresh
+    auditLog.logQbo('qbo_token_refresh_failed', 'failure', {
+      actorType: 'system',
+      organizationId: DEFAULT_ORGANIZATION_ID,
+      errorMessage: error instanceof Error ? error.message : 'Token refresh failed',
+      details: { realm_id: storedToken.realm_id },
+    });
+
     // Mark token as inactive
     await updateToken(DEFAULT_ORGANIZATION_ID, storedToken.token_id, { is_active: false });
     return null;
@@ -178,6 +202,13 @@ export async function disconnect(): Promise<void> {
 
   // Mark token as inactive
   await updateToken(DEFAULT_ORGANIZATION_ID, token.token_id, { is_active: false });
+
+  // Log QBO disconnect
+  auditLog.logQbo('qbo_disconnect', 'success', {
+    actorType: 'system',
+    organizationId: DEFAULT_ORGANIZATION_ID,
+    details: { realm_id: token.realm_id },
+  });
 }
 
 // Get OAuth client for making API calls

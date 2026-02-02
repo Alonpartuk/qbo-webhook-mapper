@@ -16,6 +16,8 @@ import OrgDetailPage from './pages/admin/OrgDetailPage';
 import SystemDashboard from './pages/admin/SystemDashboard';
 import LoginPage from './pages/admin/LoginPage';
 import ChangePasswordPage from './pages/admin/ChangePasswordPage';
+import UsersPage from './pages/admin/UsersPage';
+import AuditLogsPage from './pages/admin/AuditLogsPage';
 
 // Developer Hub
 import DeveloperHub from './pages/DeveloperHub';
@@ -68,6 +70,8 @@ export default function App() {
                     <Route path="/admin/organizations/:orgId/sources" element={<SourcesPage />} />
                     <Route path="/admin/organizations/:orgId/logs" element={<LogsPage />} />
                     <Route path="/admin/system" element={<SystemDashboard />} />
+                    <Route path="/admin/users" element={<UsersPage />} />
+                    <Route path="/admin/audit-logs" element={<AuditLogsPage />} />
 
                     {/* Developer Hub */}
                     <Route path="/developer" element={<DeveloperHub />} />

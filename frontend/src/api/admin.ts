@@ -405,8 +405,193 @@ export interface AdminUser {
   name?: string;
   role: 'admin' | 'super_admin';
   is_active: boolean;
+  must_change_password?: boolean;
   last_login_at?: string;
   created_at: string;
+}
+
+// =============================================================================
+// USER MANAGEMENT (Super Admin only)
+// =============================================================================
+
+export interface UserListResponse {
+  success: boolean;
+  users: AdminUser[];
+  total: number;
+}
+
+export interface UserManagementResponse {
+  success: boolean;
+  message: string;
+  user?: AdminUser;
+  error_code?: string;
+}
+
+/**
+ * List all admin users (super_admin only)
+ */
+export async function getUsers(): Promise<AdminUser[]> {
+  const response = await apiClient.get<UserListResponse>('/admin/users');
+  return response.data.users || [];
+}
+
+/**
+ * Get a single user by ID (super_admin only)
+ */
+export async function getUser(userId: string): Promise<AdminUser | null> {
+  const response = await apiClient.get<UserManagementResponse>(`/admin/users/${userId}`);
+  return response.data.user || null;
+}
+
+/**
+ * Create a new admin user (super_admin only)
+ */
+export async function createUser(data: {
+  email: string;
+  name?: string;
+  role?: 'admin' | 'super_admin';
+}): Promise<UserManagementResponse> {
+  const response = await apiClient.post<UserManagementResponse>('/admin/users', data);
+  return response.data;
+}
+
+/**
+ * Update an admin user (super_admin only)
+ */
+export async function updateUser(
+  userId: string,
+  data: { name?: string; role?: 'admin' | 'super_admin' }
+): Promise<UserManagementResponse> {
+  const response = await apiClient.put<UserManagementResponse>(`/admin/users/${userId}`, data);
+  return response.data;
+}
+
+/**
+ * Deactivate an admin user (super_admin only)
+ */
+export async function deactivateUser(userId: string): Promise<UserManagementResponse> {
+  const response = await apiClient.post<UserManagementResponse>(`/admin/users/${userId}/deactivate`);
+  return response.data;
+}
+
+/**
+ * Reactivate an admin user (super_admin only)
+ */
+export async function reactivateUser(userId: string): Promise<UserManagementResponse> {
+  const response = await apiClient.post<UserManagementResponse>(`/admin/users/${userId}/reactivate`);
+  return response.data;
+}
+
+/**
+ * Reset user password to default (super_admin only)
+ */
+export async function resetUserPassword(userId: string): Promise<UserManagementResponse> {
+  const response = await apiClient.post<UserManagementResponse>(`/admin/users/${userId}/reset-password`);
+  return response.data;
+}
+
+// =============================================================================
+// AUDIT LOGS (Super Admin only)
+// =============================================================================
+
+export interface AuditLog {
+  log_id: string;
+  timestamp: string;
+  category: string;
+  action: string;
+  result: 'success' | 'failure' | 'error';
+  actor_type: 'admin_user' | 'api_key' | 'system' | 'anonymous';
+  actor_id: string | null;
+  actor_email: string | null;
+  actor_ip: string | null;
+  target_type: string | null;
+  target_id: string | null;
+  organization_id: string | null;
+  details: Record<string, unknown>;
+  error_message: string | null;
+  user_agent: string | null;
+  request_path: string | null;
+  request_method: string | null;
+}
+
+export interface AuditLogFilters {
+  start_date?: string;
+  end_date?: string;
+  category?: string;
+  action?: string;
+  result?: string;
+  actor_type?: string;
+  actor_id?: string;
+  actor_email?: string;
+  target_type?: string;
+  target_id?: string;
+  organization_id?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface AuditLogResponse {
+  success: boolean;
+  logs: AuditLog[];
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+}
+
+export interface AuditLogStats {
+  period_hours: number;
+  total: number;
+  by_category: Record<string, number>;
+  by_result: Record<string, number>;
+  by_action: Record<string, number>;
+}
+
+export interface AuditLogCategories {
+  [key: string]: string[];
+}
+
+/**
+ * Query audit logs with filters (super_admin only)
+ */
+export async function getAuditLogs(filters: AuditLogFilters = {}): Promise<AuditLogResponse> {
+  const params = new URLSearchParams();
+
+  if (filters.start_date) params.set('start_date', filters.start_date);
+  if (filters.end_date) params.set('end_date', filters.end_date);
+  if (filters.category) params.set('category', filters.category);
+  if (filters.action) params.set('action', filters.action);
+  if (filters.result) params.set('result', filters.result);
+  if (filters.actor_type) params.set('actor_type', filters.actor_type);
+  if (filters.actor_id) params.set('actor_id', filters.actor_id);
+  if (filters.actor_email) params.set('actor_email', filters.actor_email);
+  if (filters.target_type) params.set('target_type', filters.target_type);
+  if (filters.target_id) params.set('target_id', filters.target_id);
+  if (filters.organization_id) params.set('organization_id', filters.organization_id);
+  if (filters.limit) params.set('limit', filters.limit.toString());
+  if (filters.offset) params.set('offset', filters.offset.toString());
+
+  const queryString = params.toString() ? `?${params.toString()}` : '';
+  const response = await apiClient.get<AuditLogResponse>(`/admin/audit-logs${queryString}`);
+  return response.data;
+}
+
+/**
+ * Get audit log statistics (super_admin only)
+ */
+export async function getAuditLogStats(hours: number = 24): Promise<AuditLogStats> {
+  const response = await apiClient.get<ApiResponse<AuditLogStats>>(
+    `/admin/audit-logs/stats?hours=${hours}`
+  );
+  return response.data.data!;
+}
+
+/**
+ * Get available audit log categories and actions
+ */
+export async function getAuditLogCategories(): Promise<AuditLogCategories> {
+  const response = await apiClient.get<ApiResponse<AuditLogCategories>>('/admin/audit-logs/categories');
+  return response.data.data!;
 }
 
 /**
