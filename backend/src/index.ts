@@ -69,6 +69,20 @@ if (process.env.NODE_ENV === 'production') {
   app.use(express.static(frontendPath));
 }
 
+// Health check endpoint (required for Cloud Run)
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
+});
+
+// Root endpoint
+app.get('/', (req, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    // In production, serve the frontend or redirect
+    return res.redirect('/api');
+  }
+  res.json({ message: 'QBO Webhook Mapper API', status: 'running' });
+});
+
 // Request logging
 app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} ${req.method} ${req.path}`);
@@ -112,13 +126,18 @@ if (process.env.NODE_ENV === 'production') {
 app.use('/api', notFoundHandler);
 app.use(errorHandler);
 
-// Start server
-app.listen(config.port, () => {
+// Start server - bind to 0.0.0.0 for Cloud Run compatibility
+const HOST = '0.0.0.0';
+console.log(`[Startup] Starting server on ${HOST}:${config.port}...`);
+
+app.listen(config.port, HOST, () => {
+  console.log(`[Startup] Server is now listening!`);
   console.log(`
 ╔═══════════════════════════════════════════════════════════╗
 ║       QBO Webhook Mapper API Server                       ║
 ╠═══════════════════════════════════════════════════════════╣
 ║  Port:        ${config.port}                                       ║
+║  Host:        ${HOST}                                     ║
 ║  Environment: ${config.nodeEnv.padEnd(12)}                        ║
 ║  BigQuery:    ${config.bigquery.projectId}/${config.bigquery.dataset.substring(0, 10)}...       ║
 ║  QBO Env:     ${config.qbo.environment.padEnd(12)}                        ║

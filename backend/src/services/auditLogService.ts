@@ -394,6 +394,11 @@ export function logWebhook(
 }
 
 // Auto-initialize on import (can be reconfigured later)
+// Wrapped in try-catch to prevent startup crashes
 if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'test') {
-  initAuditService();
+  try {
+    initAuditService();
+  } catch (err) {
+    console.error('[AuditLog] Failed to initialize (non-fatal):', err);
+  }
 }
