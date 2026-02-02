@@ -156,9 +156,9 @@ export default function AuditLogsPage() {
 
   const formatTimestamp = (timestamp: string | { value: string }) => {
     // Handle BigQuery timestamp format {value: "..."} or plain string
-    const dateStr = typeof timestamp === 'object' && timestamp?.value
+    const dateStr: string = typeof timestamp === 'object' && timestamp?.value
       ? timestamp.value
-      : timestamp;
+      : (timestamp as string);
     const date = new Date(dateStr);
     return date.toLocaleString();
   };
