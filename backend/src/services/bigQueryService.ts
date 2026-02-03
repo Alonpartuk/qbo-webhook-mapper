@@ -69,6 +69,17 @@ function parseTimestamp(value: unknown): Date | undefined {
 
 // Helper to parse organization from BigQuery row
 function parseOrganization(row: Record<string, unknown>): Organization {
+  // Safely parse settings JSON
+  let settings: Organization['settings'] | undefined;
+  if (row.settings) {
+    try {
+      settings = typeof row.settings === 'string' ? JSON.parse(row.settings) : row.settings;
+    } catch (e) {
+      console.error('[BigQuery] Failed to parse organization settings:', e);
+      settings = undefined;
+    }
+  }
+
   return {
     organization_id: row.organization_id as string,
     name: row.name as string,
@@ -76,7 +87,7 @@ function parseOrganization(row: Record<string, unknown>): Organization {
     plan_tier: (row.plan_tier as Organization['plan_tier']) || 'free',
     is_active: row.is_active as boolean,
     connection_link_enabled: row.connection_link_enabled !== false, // Default to true
-    settings: row.settings ? (typeof row.settings === 'string' ? JSON.parse(row.settings) : row.settings) : undefined,
+    settings,
     created_at: parseTimestamp(row.created_at) || new Date(),
     updated_at: parseTimestamp(row.updated_at),
     created_by: row.created_by as string | undefined,
