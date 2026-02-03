@@ -189,14 +189,17 @@ router.get('/:clientSlug/sources', tenantContext, async (req: Request, res: Resp
     const sources = await getSources(organization_id);
     const activeSources = sources.filter(s => s.is_active);
 
-    // Return sources with webhook URLs
+    // Return full source data with webhook URLs for admin interface
     const baseUrl = process.env.API_BASE_URL || `${req.protocol}://${req.get('host')}`;
     const sourcesWithUrls = activeSources.map(s => ({
       source_id: s.source_id,
+      organization_id: s.organization_id,
       name: s.name,
+      description: s.description,
       source_type: s.source_type,
+      api_key: s.api_key,
       webhook_url: `${baseUrl}/api/v1/webhook/${organization_slug}/${s.source_id}`,
-      api_key_preview: s.api_key.substring(0, 8) + '...',
+      is_active: s.is_active,
       created_at: s.created_at,
     }));
 
