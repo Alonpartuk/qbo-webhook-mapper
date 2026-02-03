@@ -26,6 +26,14 @@ export default function DocsSidebar({
   selectedEndpoint,
   onSelectEndpoint,
 }: DocsSidebarProps) {
+  // Smooth scroll to element by ID
+  const scrollToSection = (elementId: string) => {
+    const element = document.getElementById(elementId);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
   return (
     <nav className="space-y-6">
       {/* Introduction */}
@@ -33,31 +41,31 @@ export default function DocsSidebar({
         <h3 className="text-sm font-semibold text-gray-900 mb-2">Getting Started</h3>
         <ul className="space-y-1 text-sm">
           <li>
-            <a
-              href="#authentication"
-              className="flex items-center gap-2 px-2 py-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-lg"
+            <button
+              onClick={() => scrollToSection('authentication')}
+              className="w-full flex items-center gap-2 px-2 py-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-lg text-left"
             >
               <ChevronRight className="w-3 h-3" />
               Authentication
-            </a>
+            </button>
           </li>
           <li>
-            <a
-              href="#rate-limits"
-              className="flex items-center gap-2 px-2 py-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-lg"
+            <button
+              onClick={() => scrollToSection('rate-limits')}
+              className="w-full flex items-center gap-2 px-2 py-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-lg text-left"
             >
               <ChevronRight className="w-3 h-3" />
               Rate Limits
-            </a>
+            </button>
           </li>
           <li>
-            <a
-              href="#error-codes"
-              className="flex items-center gap-2 px-2 py-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-lg"
+            <button
+              onClick={() => scrollToSection('error-codes')}
+              className="w-full flex items-center gap-2 px-2 py-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-lg text-left"
             >
               <ChevronRight className="w-3 h-3" />
               Error Codes
-            </a>
+            </button>
           </li>
         </ul>
       </div>

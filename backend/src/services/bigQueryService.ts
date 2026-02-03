@@ -26,24 +26,161 @@ const TABLES = {
   ADMIN_USERS: 'admin_users',
   GLOBAL_TEMPLATES: 'global_mapping_templates',
   CLIENT_OVERRIDES: 'client_mapping_overrides',
-  SOURCES: 'webhook_sources',
-  PAYLOADS: 'webhook_payloads',
-  MAPPINGS: 'mapping_configurations',
-  TOKENS: 'oauth_tokens',
-  LOGS: 'sync_logs',
+  SOURCES: 'webhook_sources_v2',           // v2 table with organization_id
+  PAYLOADS: 'webhook_payloads_v2',         // v2 table with organization_id
+  MAPPINGS: 'mapping_configurations_v2',   // v2 table with organization_id
+  TOKENS: 'oauth_tokens_v2',               // v2 table with organization_id
+  LOGS: 'sync_logs_v2',                    // v2 table with organization_id
   API_KEYS: 'api_keys',
   API_USAGE_LOGS: 'api_usage_logs',
 };
 
-// Helper to run queries
-async function runQuery<T>(query: string, params?: Record<string, unknown>): Promise<T[]> {
+// Log BigQuery configuration on module load
+console.log('[BigQuery] Initializing with config:', {
+  projectId: config.bigquery.projectId,
+  dataset: config.bigquery.dataset,
+  tables: Object.keys(TABLES).join(', '),
+});
+
+// Custom error class for BigQuery-specific errors
+export class BigQueryError extends Error {
+  public readonly code: string;
+  public readonly reason: string;
+  public readonly isConnectionError: boolean;
+  public readonly isNotFoundError: boolean;
+  public readonly isPermissionError: boolean;
+
+  constructor(
+    message: string,
+    code: string,
+    reason: string,
+    originalError?: unknown
+  ) {
+    super(message);
+    this.name = 'BigQueryError';
+    this.code = code;
+    this.reason = reason;
+    this.isConnectionError = ['ETIMEDOUT', 'ECONNREFUSED', 'ENOTFOUND', 'UNAVAILABLE'].includes(code);
+    this.isNotFoundError = code === 'NOT_FOUND' || reason === 'notFound';
+    this.isPermissionError = code === 'PERMISSION_DENIED' || reason === 'accessDenied';
+
+    // Preserve stack trace
+    if (originalError instanceof Error && originalError.stack) {
+      this.stack = originalError.stack;
+    }
+  }
+}
+
+// Helper to classify and wrap BigQuery errors
+function classifyBigQueryError(error: unknown, context: string): BigQueryError {
+  const gcpError = error as {
+    code?: string | number;
+    message?: string;
+    errors?: Array<{ reason?: string; message?: string }>;
+  };
+
+  const errorCode = String(gcpError.code || 'UNKNOWN');
+  const errorReason = gcpError.errors?.[0]?.reason || 'unknown';
+  const errorMessage = gcpError.message || 'Unknown BigQuery error';
+
+  // Create descriptive message based on error type
+  let descriptiveMessage: string;
+  if (['ETIMEDOUT', 'ECONNREFUSED', 'ENOTFOUND'].includes(errorCode)) {
+    descriptiveMessage = `BigQuery connection timeout in ${context}: Unable to reach BigQuery service`;
+  } else if (errorCode === 'PERMISSION_DENIED' || errorReason === 'accessDenied') {
+    descriptiveMessage = `BigQuery permission denied in ${context}: Service account lacks required permissions`;
+  } else if (errorCode === 'NOT_FOUND' || errorReason === 'notFound') {
+    descriptiveMessage = `BigQuery resource not found in ${context}: Table or dataset may not exist`;
+  } else if (errorReason === 'invalidQuery') {
+    descriptiveMessage = `BigQuery invalid query in ${context}: ${errorMessage}`;
+  } else {
+    descriptiveMessage = `BigQuery error in ${context}: ${errorMessage}`;
+  }
+
+  return new BigQueryError(descriptiveMessage, errorCode, errorReason, error);
+}
+
+// Helper to handle BigQuery insert operations with PartialFailureError logging
+async function runInsert(
+  tableName: string,
+  rows: Record<string, unknown>[],
+  context?: string
+): Promise<void> {
+  const insertContext = context || `insert into ${tableName}`;
+
+  try {
+    const table = dataset.table(tableName);
+    await table.insert(rows);
+    console.log(`[BigQuery] ${insertContext}: inserted ${rows.length} row(s)`);
+  } catch (error: unknown) {
+    // Check if this is a PartialFailureError (BigQuery streaming insert error)
+    const bqError = error as {
+      name?: string;
+      errors?: Array<{
+        row?: unknown;
+        errors?: Array<{ reason?: string; message?: string; location?: string }>;
+      }>;
+      message?: string;
+    };
+
+    if (bqError.name === 'PartialFailureError' || bqError.errors) {
+      console.error(`[BigQuery] PartialFailureError in ${insertContext}:`);
+      console.error('[BigQuery] Full error.errors:', JSON.stringify(bqError.errors, null, 2));
+
+      // Also log a summary for quick diagnosis
+      if (Array.isArray(bqError.errors)) {
+        bqError.errors.forEach((rowError, index) => {
+          console.error(`[BigQuery] Row ${index} errors:`, rowError.errors);
+        });
+      }
+    } else {
+      // Not a PartialFailureError, log normally
+      console.error(`[BigQuery] Insert error in ${insertContext}:`, error);
+    }
+
+    // Re-throw the error so callers can handle it
+    throw error;
+  }
+}
+
+// Helper to run queries with detailed error logging
+async function runQuery<T>(query: string, params?: Record<string, unknown>, context?: string): Promise<T[]> {
   const options = {
     query,
     params,
     location: 'US',
   };
-  const [rows] = await bigquery.query(options);
-  return rows as T[];
+
+  const queryContext = context || 'query';
+
+  try {
+    console.log(`[BigQuery] Executing ${queryContext}:`, {
+      projectId: config.bigquery.projectId,
+      dataset: config.bigquery.dataset,
+      queryPreview: query.substring(0, 100).replace(/\s+/g, ' ').trim() + '...',
+    });
+
+    const [rows] = await bigquery.query(options);
+    console.log(`[BigQuery] ${queryContext} returned ${rows.length} rows`);
+    return rows as T[];
+  } catch (error) {
+    // Classify and log the error with full context
+    const bqError = classifyBigQueryError(error, queryContext);
+    console.error('[BigQuery] Query failed:', {
+      context: queryContext,
+      projectId: config.bigquery.projectId,
+      dataset: config.bigquery.dataset,
+      errorCode: bqError.code,
+      errorReason: bqError.reason,
+      errorMessage: bqError.message,
+      isConnectionError: bqError.isConnectionError,
+      isNotFoundError: bqError.isNotFoundError,
+      isPermissionError: bqError.isPermissionError,
+      queryPreview: query.substring(0, 200) + '...',
+      params: params ? Object.keys(params) : [],
+    });
+    throw bqError;
+  }
 }
 
 // Helper to get full table path
@@ -117,8 +254,7 @@ export async function createOrganization(
     created_by: createdBy,
   };
 
-  const table = dataset.table(TABLES.ORGANIZATIONS);
-  await table.insert([{
+  await runInsert(TABLES.ORGANIZATIONS, [{
     organization_id: org.organization_id,
     name: org.name,
     slug: org.slug,
@@ -129,7 +265,7 @@ export async function createOrganization(
     created_at: org.created_at.toISOString(),
     updated_at: org.created_at.toISOString(),
     created_by: createdBy,
-  }]);
+  }], `createOrganization(${slug})`);
 
   return org;
 }
@@ -154,12 +290,24 @@ export async function getOrganizationById(orgId: string): Promise<Organization |
 }
 
 export async function getOrganizationBySlug(slug: string): Promise<Organization | null> {
+  // Case-insensitive slug lookup to handle variations like 'Apricoa' vs 'apricoa'
+  const normalizedSlug = slug.toLowerCase().trim();
   const query = `
     SELECT * FROM ${tablePath(TABLES.ORGANIZATIONS)}
-    WHERE slug = @slug AND is_active = TRUE
+    WHERE LOWER(slug) = @slug AND is_active = TRUE
   `;
-  const rows = await runQuery<Record<string, unknown>>(query, { slug });
-  return rows[0] ? parseOrganization(rows[0]) : null;
+  const rows = await runQuery<Record<string, unknown>>(
+    query,
+    { slug: normalizedSlug },
+    `getOrganizationBySlug(${slug})`
+  );
+
+  if (!rows[0]) {
+    console.log(`[BigQuery] Organization not found for slug: "${slug}" (normalized: "${normalizedSlug}")`);
+    return null;
+  }
+
+  return parseOrganization(rows[0]);
 }
 
 export async function updateOrganization(orgId: string, updates: Partial<Organization>): Promise<Organization | null> {
@@ -231,8 +379,7 @@ export async function createAdminUser(
     created_at: new Date(),
   };
 
-  const table = dataset.table(TABLES.ADMIN_USERS);
-  await table.insert([{
+  await runInsert(TABLES.ADMIN_USERS, [{
     user_id: user.user_id,
     email: user.email,
     name: user.name || null,
@@ -242,7 +389,7 @@ export async function createAdminUser(
     is_active: user.is_active,
     last_login_at: null,
     created_at: user.created_at.toISOString(),
-  }]);
+  }], `createAdminUser(${email})`);
 
   return user;
 }
@@ -313,8 +460,7 @@ export async function createGlobalTemplate(
     created_at: new Date(),
   };
 
-  const table = dataset.table(TABLES.GLOBAL_TEMPLATES);
-  await table.insert([{
+  await runInsert(TABLES.GLOBAL_TEMPLATES, [{
     template_id: template.template_id,
     name: template.name,
     source_type: template.source_type,
@@ -326,7 +472,7 @@ export async function createGlobalTemplate(
     priority: template.priority,
     created_at: template.created_at.toISOString(),
     updated_at: template.created_at.toISOString(),
-  }]);
+  }], `createGlobalTemplate(${name})`);
 
   return template;
 }
@@ -451,8 +597,7 @@ export async function createClientOverride(
     created_at: new Date(),
   };
 
-  const table = dataset.table(TABLES.CLIENT_OVERRIDES);
-  await table.insert([{
+  await runInsert(TABLES.CLIENT_OVERRIDES, [{
     override_id: override.override_id,
     organization_id: override.organization_id,
     source_id: override.source_id || null,
@@ -465,7 +610,7 @@ export async function createClientOverride(
     is_active: override.is_active,
     created_at: override.created_at.toISOString(),
     updated_at: override.created_at.toISOString(),
-  }]);
+  }], `createClientOverride(${organizationId}, ${name})`);
 
   return override;
 }
@@ -603,8 +748,7 @@ export async function createSource(
     created_at: new Date(),
   };
 
-  const table = dataset.table(TABLES.SOURCES);
-  await table.insert([{
+  await runInsert(TABLES.SOURCES, [{
     source_id: source.source_id,
     organization_id: source.organization_id,
     name: source.name,
@@ -615,7 +759,7 @@ export async function createSource(
     is_active: source.is_active,
     created_at: source.created_at.toISOString(),
     updated_at: source.created_at.toISOString(),
-  }]);
+  }], `createSource(${organizationId}, ${name})`);
 
   return source;
 }
@@ -713,8 +857,7 @@ export async function savePayload(
     processed: false,
   };
 
-  const table = dataset.table(TABLES.PAYLOADS);
-  await table.insert([{
+  await runInsert(TABLES.PAYLOADS, [{
     payload_id: webhookPayload.payload_id,
     organization_id: webhookPayload.organization_id,
     source_id: webhookPayload.source_id,
@@ -725,7 +868,7 @@ export async function savePayload(
     processed: webhookPayload.processed,
     processed_at: null,
     invoice_id: null,
-  }]);
+  }], `savePayload(${organizationId}, ${sourceId})`);
 
   return webhookPayload;
 }
@@ -810,8 +953,7 @@ export async function createMapping(
     created_at: new Date(),
   };
 
-  const table = dataset.table(TABLES.MAPPINGS);
-  await table.insert([{
+  await runInsert(TABLES.MAPPINGS, [{
     mapping_id: mapping.mapping_id,
     organization_id: mapping.organization_id,
     source_id: mapping.source_id,
@@ -824,7 +966,7 @@ export async function createMapping(
     static_values: mapping.static_values ? JSON.stringify(mapping.static_values) : null,
     created_at: mapping.created_at.toISOString(),
     updated_at: mapping.created_at.toISOString(),
-  }]);
+  }], `createMapping(${organizationId}, ${sourceId}, ${name})`);
 
   return mapping;
 }
@@ -959,8 +1101,7 @@ export async function saveToken(
     { organizationId, realmId: token.realm_id }
   );
 
-  const table = dataset.table(TABLES.TOKENS);
-  await table.insert([{
+  await runInsert(TABLES.TOKENS, [{
     token_id: oauthToken.token_id,
     organization_id: oauthToken.organization_id,
     realm_id: oauthToken.realm_id,
@@ -977,7 +1118,7 @@ export async function saveToken(
     is_active: oauthToken.is_active,
     created_at: oauthToken.created_at.toISOString(),
     updated_at: oauthToken.created_at.toISOString(),
-  }]);
+  }], `saveToken(${organizationId}, realm=${token.realm_id})`);
 
   return oauthToken;
 }
@@ -1070,8 +1211,7 @@ export async function createSyncLog(
     created_at: new Date(),
   };
 
-  const table = dataset.table(TABLES.LOGS);
-  await table.insert([{
+  await runInsert(TABLES.LOGS, [{
     log_id: log.log_id,
     organization_id: log.organization_id,
     payload_id: log.payload_id,
@@ -1087,7 +1227,7 @@ export async function createSyncLog(
     retry_count: log.retry_count,
     created_at: log.created_at.toISOString(),
     completed_at: null,
-  }]);
+  }], `createSyncLog(${organizationId}, ${sourceId})`);
 
   return log;
 }
@@ -1270,8 +1410,7 @@ export async function getTokensExpiringWithin(minutes: number): Promise<OAuthTok
  * Create a new API key (key_hash is pre-computed by apiKeyService)
  */
 export async function createApiKey(apiKey: ApiKey): Promise<ApiKey> {
-  const table = dataset.table(TABLES.API_KEYS);
-  await table.insert([{
+  await runInsert(TABLES.API_KEYS, [{
     key_id: apiKey.key_id,
     organization_id: apiKey.organization_id,
     key_hash: apiKey.key_hash,
@@ -1287,7 +1426,7 @@ export async function createApiKey(apiKey: ApiKey): Promise<ApiKey> {
     revoked_at: apiKey.revoked_at?.toISOString() || null,
     revoked_by: apiKey.revoked_by,
     grace_period_ends_at: apiKey.grace_period_ends_at?.toISOString() || null,
-  }]);
+  }], `createApiKey(${apiKey.name}, org=${apiKey.organization_id})`);
 
   return apiKey;
 }
@@ -1460,8 +1599,7 @@ export async function updateApiKeyLastUsed(keyId: string): Promise<void> {
  * Log an API request
  */
 export async function logApiUsage(log: ApiUsageLog): Promise<void> {
-  const table = dataset.table(TABLES.API_USAGE_LOGS);
-  await table.insert([{
+  await runInsert(TABLES.API_USAGE_LOGS, [{
     log_id: log.log_id,
     timestamp: log.timestamp.toISOString(),
     organization_id: log.organization_id,
@@ -1476,7 +1614,7 @@ export async function logApiUsage(log: ApiUsageLog): Promise<void> {
     error_code: log.error_code,
     user_agent: log.user_agent,
     ip_address: log.ip_address,
-  }]);
+  }], `logApiUsage(${log.endpoint})`);
 }
 
 /**
@@ -1569,7 +1707,7 @@ export async function insertAuditLogs(logs: AuditLog[]): Promise<void> {
 
   const rows = logs.map((log) => ({
     log_id: log.log_id,
-    timestamp: log.timestamp,
+    timestamp: log.timestamp instanceof Date ? log.timestamp.toISOString() : log.timestamp,
     category: log.category,
     action: log.action,
     result: log.result,
@@ -1587,10 +1725,7 @@ export async function insertAuditLogs(logs: AuditLog[]): Promise<void> {
     request_method: log.request_method,
   }));
 
-  await bigquery
-    .dataset(config.bigquery.dataset)
-    .table('audit_logs')
-    .insert(rows);
+  await runInsert('audit_logs', rows, `insertAuditLogs(${logs.length} logs)`);
 }
 
 /**
@@ -1710,4 +1845,114 @@ export async function countSuperAdmins(): Promise<number> {
   `;
   const rows = await runQuery<{ count: number }>(query);
   return rows[0]?.count || 0;
+}
+
+// ============================================================
+// CONNECT TOKENS (Masked URLs for external QBO connection)
+// ============================================================
+
+import { ConnectToken } from '../types';
+
+const CONNECT_TOKENS_TABLE = 'connect_tokens';
+
+/**
+ * Create a new connect token for an organization
+ */
+export async function createConnectToken(
+  organizationId: string,
+  tokenHash: string,
+  options: { name?: string; expires_at?: Date; max_uses?: number; created_by?: string } = {}
+): Promise<ConnectToken> {
+  const token: ConnectToken = {
+    token_id: uuidv4(),
+    organization_id: organizationId,
+    token_hash: tokenHash,
+    name: options.name,
+    expires_at: options.expires_at,
+    max_uses: options.max_uses,
+    use_count: 0,
+    is_active: true,
+    created_at: new Date(),
+    created_by: options.created_by,
+  };
+
+  await runInsert(CONNECT_TOKENS_TABLE, [{
+    token_id: token.token_id,
+    organization_id: token.organization_id,
+    token_hash: token.token_hash,
+    name: token.name || null,
+    expires_at: token.expires_at?.toISOString() || null,
+    max_uses: token.max_uses || null,
+    use_count: token.use_count,
+    is_active: token.is_active,
+    created_at: token.created_at.toISOString(),
+    created_by: token.created_by || null,
+    last_used_at: null,
+  }], `createConnectToken(${organizationId})`);
+
+  return token;
+}
+
+/**
+ * Get a connect token by its hash (for URL validation)
+ */
+export async function getConnectTokenByHash(tokenHash: string): Promise<ConnectToken | null> {
+  const query = `
+    SELECT * FROM ${tablePath(CONNECT_TOKENS_TABLE)}
+    WHERE token_hash = @tokenHash AND is_active = TRUE
+  `;
+  const rows = await runQuery<ConnectToken>(query, { tokenHash });
+
+  if (!rows[0]) return null;
+
+  const row = rows[0];
+  return {
+    ...row,
+    created_at: parseTimestamp(row.created_at) || new Date(),
+    expires_at: parseTimestamp(row.expires_at),
+    last_used_at: parseTimestamp(row.last_used_at),
+  };
+}
+
+/**
+ * Get all connect tokens for an organization
+ */
+export async function getConnectTokensByOrganization(organizationId: string): Promise<ConnectToken[]> {
+  const query = `
+    SELECT * FROM ${tablePath(CONNECT_TOKENS_TABLE)}
+    WHERE organization_id = @organizationId
+    ORDER BY created_at DESC
+  `;
+  const rows = await runQuery<ConnectToken>(query, { organizationId });
+
+  return rows.map(row => ({
+    ...row,
+    created_at: parseTimestamp(row.created_at) || new Date(),
+    expires_at: parseTimestamp(row.expires_at),
+    last_used_at: parseTimestamp(row.last_used_at),
+  }));
+}
+
+/**
+ * Increment use count and update last_used_at for a connect token
+ */
+export async function incrementConnectTokenUsage(tokenId: string): Promise<void> {
+  const query = `
+    UPDATE ${tablePath(CONNECT_TOKENS_TABLE)}
+    SET use_count = use_count + 1, last_used_at = CURRENT_TIMESTAMP()
+    WHERE token_id = @tokenId
+  `;
+  await runQuery(query, { tokenId });
+}
+
+/**
+ * Deactivate a connect token
+ */
+export async function deactivateConnectToken(tokenId: string): Promise<void> {
+  const query = `
+    UPDATE ${tablePath(CONNECT_TOKENS_TABLE)}
+    SET is_active = FALSE
+    WHERE token_id = @tokenId
+  `;
+  await runQuery(query, { tokenId });
 }

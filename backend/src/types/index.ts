@@ -185,5 +185,20 @@ export interface Transformation {
   example?: string;
 }
 
+// Connect Token for masked external URLs
+export interface ConnectToken {
+  token_id: string;
+  organization_id: string;
+  token_hash: string;           // Unique hash for URL (e.g., "abc123xyz")
+  name?: string;                // Optional description (e.g., "Email to John")
+  expires_at?: Date;            // Optional expiration
+  max_uses?: number;            // Optional max usage count
+  use_count: number;            // Times used
+  is_active: boolean;
+  created_at: Date;
+  created_by?: string;          // Admin user who created it
+  last_used_at?: Date;
+}
+
 // Default organization ID for backward compatibility
 export const DEFAULT_ORGANIZATION_ID = 'default-org-001';

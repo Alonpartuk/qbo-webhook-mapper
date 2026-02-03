@@ -1,11 +1,19 @@
-// Immediate startup logging for Cloud Run debugging
+// =============================================================================
+// SAFE START - Validate environment BEFORE any other imports
+// =============================================================================
 console.log('[Startup] Process starting...');
 console.log('[Startup] NODE_ENV:', process.env.NODE_ENV);
 console.log('[Startup] PORT:', process.env.PORT);
+console.log('[Startup] USE_MOCK_DATA:', process.env.USE_MOCK_DATA);
+
+// Validate config first (before heavy imports that might fail)
+import { validateOrExit } from './utils/configValidator';
+validateOrExit();
 
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import fs from 'fs';
 import config from './config';
 import routes from './routes';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
@@ -66,9 +74,9 @@ app.use(cors({
     }
 
     // Allow any Cloud Run URL from the same project (*.run.app)
-    // This handles the dynamic URL format from Cloud Run
-    if (origin.endsWith('.run.app') && origin.includes('qbo-webhook-mapper-frontend')) {
-      console.log('[CORS] Allowing Cloud Run frontend origin:', origin);
+    // This handles both frontend-only and combined deployments
+    if (origin.endsWith('.run.app') && origin.includes('qbo-webhook-mapper')) {
+      console.log('[CORS] Allowing Cloud Run origin:', origin);
       return callback(null, true);
     }
 
@@ -87,10 +95,50 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static frontend files in production
+// Serve static frontend files in production ONLY if frontend is bundled with backend
+// Skip if FRONTEND_URL is set to an external URL (separate deployment)
+const frontendUrl = process.env.FRONTEND_URL || '';
+const isFrontendExternal = frontendUrl.startsWith('http://') || frontendUrl.startsWith('https://');
+
+// Calculate frontend path - use absolute path in Docker container
+// In Docker: cwd=/app/backend, frontend is at /app/frontend/dist
+const frontendPath = process.env.NODE_ENV === 'production'
+  ? '/app/frontend/dist'
+  : path.join(__dirname, '../../frontend/dist');
+
+console.log('[Static] Frontend path:', frontendPath);
+console.log('[Static] __dirname:', __dirname);
+console.log('[Static] cwd:', process.cwd());
+
+// Verify frontend path exists before setting up static serving
 if (process.env.NODE_ENV === 'production') {
-  const frontendPath = path.join(__dirname, '../../frontend/dist');
-  app.use(express.static(frontendPath));
+  if (fs.existsSync(frontendPath)) {
+    console.log('[Static] ✓ Frontend dist folder exists');
+    const files = fs.readdirSync(frontendPath);
+    console.log('[Static] Contents:', files.join(', '));
+  } else {
+    console.error('[Static] ❌ CRITICAL: Frontend dist NOT FOUND at:', frontendPath);
+    console.error('[Static] This will cause 500 errors for all frontend requests!');
+  }
+}
+
+if (process.env.NODE_ENV === 'production' && !isFrontendExternal) {
+  // Serve static files with aggressive caching for production assets
+  app.use(express.static(frontendPath, {
+    maxAge: '1y', // 1 year cache for static assets (they have content hashes)
+    etag: true,
+    index: 'index.html', // Explicitly set index file
+    setHeaders: (res, filePath) => {
+      // HTML files should not be cached
+      if (filePath && filePath.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      } else if (filePath && filePath.match(/\.(js|css|woff2?|ttf|eot|ico|png|jpg|jpeg|gif|svg)$/)) {
+        // Immutable for hashed assets
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      }
+    },
+  }));
+  console.log('[Static] express.static middleware registered for:', frontendPath);
 }
 
 // Health check endpoint (required for Cloud Run)
@@ -98,14 +146,12 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
-// Root endpoint
-app.get('/', (req, res) => {
-  if (process.env.NODE_ENV === 'production') {
-    // In production, serve the frontend or redirect
-    return res.redirect('/api');
-  }
-  res.json({ message: 'QBO Webhook Mapper API', status: 'running' });
-});
+// Root endpoint - in development show API info, in production let SPA catch-all handle it
+if (process.env.NODE_ENV !== 'production') {
+  app.get('/', (req, res) => {
+    res.json({ message: 'QBO Webhook Mapper API', status: 'running' });
+  });
+}
 
 // Request logging
 app.use((req, res, next) => {
@@ -132,23 +178,70 @@ app.use('/api', standardRateLimiter);
 // API Routes
 app.use('/api', routes);
 
-// Serve React app for non-API routes in production
-if (process.env.NODE_ENV === 'production') {
-  const frontendPath = path.join(__dirname, '../../frontend/dist');
+// =============================================================================
+// ERROR HANDLING - Must come before SPA catch-all
+// =============================================================================
 
-  // Catch-all for SPA routing - serve index.html for any non-API, non-static routes
-  app.get('*', (req, res, next) => {
-    // Skip API routes and static file requests with extensions
-    if (req.path.startsWith('/api') || req.path.includes('.')) {
-      return next();
+// API 404 handler - returns JSON for all /api/* routes that don't match
+app.use('/api', notFoundHandler);
+
+// Global error handler
+app.use(errorHandler);
+
+// =============================================================================
+// SPA ROUTING - Catch-all for frontend routes (must be AFTER API routes)
+// =============================================================================
+
+if (process.env.NODE_ENV === 'production') {
+  // Verify frontend path exists at startup
+  const indexHtmlPath = path.join(frontendPath, 'index.html');
+  if (fs.existsSync(indexHtmlPath)) {
+    console.log('[SPA] ✓ index.html verified at:', indexHtmlPath);
+  } else {
+    console.error('[SPA] ❌ CRITICAL: index.html NOT FOUND at:', indexHtmlPath);
+    console.error('[SPA] Frontend will not work! Check Docker build.');
+  }
+
+  // Catch-all for SPA routing - ONLY for non-API, non-file routes
+  app.get('*', (req, res) => {
+    // Double-check we're not handling API routes (they should have been caught above)
+    if (req.path.startsWith('/api')) {
+      // This shouldn't happen, but return JSON just in case
+      return res.status(404).json({
+        success: false,
+        error: `API route not found: ${req.method} ${req.path}`,
+      });
     }
-    res.sendFile(path.join(frontendPath, 'index.html'));
+
+    // Skip static file requests (they would have been served by express.static)
+    if (req.path.includes('.') && !req.path.endsWith('.html')) {
+      console.log('[SPA] Static file not found, returning 404:', req.path);
+      return res.status(404).json({
+        success: false,
+        error: 'Static file not found',
+      });
+    }
+
+    // If frontend is deployed externally, redirect to it
+    if (isFrontendExternal) {
+      return res.redirect(`${frontendUrl}${req.path}`);
+    }
+
+    // Otherwise serve local index.html for SPA routing (with error handling!)
+    const indexPath = path.join(frontendPath, 'index.html');
+    res.sendFile(indexPath, (err) => {
+      if (err) {
+        console.error('[SPA] Failed to send index.html:', err.message);
+        console.error('[SPA] Attempted path:', indexPath);
+        res.status(500).json({
+          success: false,
+          error: 'Frontend not available',
+          details: process.env.NODE_ENV === 'development' ? err.message : undefined,
+        });
+      }
+    });
   });
 }
-
-// Error handling - only for API routes
-app.use('/api', notFoundHandler);
-app.use(errorHandler);
 
 // Start server - bind to 0.0.0.0 for Cloud Run compatibility
 const HOST = '0.0.0.0';

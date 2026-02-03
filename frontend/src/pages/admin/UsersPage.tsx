@@ -286,7 +286,7 @@ export default function UsersPage() {
                           <MoreHorizontal className="w-4 h-4 text-gray-500" />
                         </button>
                         {actionMenuUser === user.user_id && (
-                          <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-10">
+                          <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-2xl border border-gray-200 py-1 z-10">
                             <button
                               onClick={() => handleResetPassword(user.user_id)}
                               className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
@@ -365,8 +365,8 @@ function CreateUserModal({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
+    <div className="fixed inset-0 bg-gray-900 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg shadow-2xl border border-gray-200 w-full max-w-md mx-4">
         <div className="px-6 py-4 border-b border-gray-200">
           <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
             <UserPlus className="w-5 h-5" />

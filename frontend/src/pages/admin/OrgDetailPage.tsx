@@ -24,6 +24,8 @@ import {
   Search,
   Code2,
   GitBranch,
+  Plus,
+  X,
 } from 'lucide-react';
 import { exportToCsv, customerCsvColumns, itemCsvColumns } from '../../utils/csvExport';
 import { Organization, OrganizationStats, OrgConnectionStatus, WebhookSource, WebhookPayload, ClientMappingOverride, FieldMapping, QBOCustomer, QBOItem } from '../../types';
@@ -58,6 +60,16 @@ export default function OrgDetailPage() {
   const [latestPayload, setLatestPayload] = useState<WebhookPayload | null>(null);
   const [mappings, setMappings] = useState<ClientMappingOverride[]>([]);
   const [loadingMappings, setLoadingMappings] = useState(false);
+
+  // Create Source Modal state
+  const [showCreateSourceModal, setShowCreateSourceModal] = useState(false);
+  const [newSource, setNewSource] = useState<{ name: string; description: string; source_type: string }>({
+    name: '',
+    description: '',
+    source_type: 'custom',
+  });
+  const [creatingSource, setCreatingSource] = useState(false);
+  const [createdSource, setCreatedSource] = useState<(WebhookSource & { webhook_url: string }) | null>(null);
 
   useEffect(() => {
     if (slug) {
@@ -209,6 +221,35 @@ export default function OrgDetailPage() {
     navigator.clipboard.writeText(url);
     setSaveMessage({ type: 'success', text: 'Link copied to clipboard!' });
     setTimeout(() => setSaveMessage(null), 3000);
+  };
+
+  const handleCreateSource = async () => {
+    if (!organization || !newSource.name.trim()) return;
+
+    setCreatingSource(true);
+    try {
+      const created = await adminApi.createOrgSource(organization.slug, {
+        name: newSource.name.trim(),
+        description: newSource.description.trim(),
+        source_type: newSource.source_type,
+      });
+      setCreatedSource(created);
+      // Refresh sources list
+      await loadMappingsData();
+      // Select the newly created source
+      setSelectedSourceId(created.source_id);
+    } catch (err) {
+      console.error('Failed to create source:', err);
+      alert('Failed to create source');
+    } finally {
+      setCreatingSource(false);
+    }
+  };
+
+  const resetCreateSourceModal = () => {
+    setShowCreateSourceModal(false);
+    setNewSource({ name: '', description: '', source_type: 'custom' });
+    setCreatedSource(null);
   };
 
   // Loading state
@@ -372,6 +413,7 @@ export default function OrgDetailPage() {
             mappings={mappings}
             loading={loadingMappings}
             onRefresh={loadMappingsData}
+            onCreateSource={() => setShowCreateSourceModal(true)}
           />
         )}
 
@@ -383,6 +425,7 @@ export default function OrgDetailPage() {
             onSelectSource={setSelectedSourceId}
             latestPayload={latestPayload}
             onRefresh={loadMappingsData}
+            onCreateSource={() => setShowCreateSourceModal(true)}
           />
         )}
 
@@ -416,6 +459,150 @@ export default function OrgDetailPage() {
           </div>
         )}
       </div>
+
+      {/* Create Source Modal */}
+      {showCreateSourceModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={resetCreateSourceModal} />
+          <div className="relative bg-white rounded-xl shadow-xl max-w-md w-full mx-4 p-6">
+            <button
+              onClick={resetCreateSourceModal}
+              className="absolute right-4 top-4 text-gray-400 hover:text-gray-600"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            {!createdSource ? (
+              <>
+                <h2 className="text-xl font-semibold text-gray-900 mb-4">Create Webhook Source</h2>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Name <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={newSource.name}
+                      onChange={(e) => setNewSource({ ...newSource, name: e.target.value })}
+                      placeholder="e.g., Shopify Orders"
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Description
+                    </label>
+                    <input
+                      type="text"
+                      value={newSource.description}
+                      onChange={(e) => setNewSource({ ...newSource, description: e.target.value })}
+                      placeholder="e.g., Orders from Shopify store"
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Source Type
+                    </label>
+                    <select
+                      value={newSource.source_type}
+                      onChange={(e) => setNewSource({ ...newSource, source_type: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 bg-white"
+                    >
+                      <option value="custom">Custom</option>
+                      <option value="shopify">Shopify</option>
+                      <option value="woocommerce">WooCommerce</option>
+                      <option value="stripe">Stripe</option>
+                      <option value="square">Square</option>
+                    </select>
+                  </div>
+                  <div className="flex gap-3 mt-6">
+                    <button
+                      onClick={resetCreateSourceModal}
+                      className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleCreateSource}
+                      disabled={creatingSource || !newSource.name.trim()}
+                      className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white bg-gray-900 rounded-lg hover:bg-gray-800 disabled:opacity-50"
+                    >
+                      {creatingSource ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Creating...
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="w-4 h-4" />
+                          Create Source
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-center">
+                  <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-green-100 flex items-center justify-center">
+                    <CheckCircle2 className="w-6 h-6 text-green-600" />
+                  </div>
+                  <h2 className="text-xl font-semibold text-gray-900 mb-2">Source Created!</h2>
+                  <p className="text-gray-500 mb-4">
+                    Save the API key below - it will only be shown once.
+                  </p>
+                </div>
+                <div className="space-y-4 bg-gray-50 rounded-lg p-4">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Source ID</label>
+                    <code className="block text-sm font-mono text-gray-800 break-all">
+                      {createdSource.source_id}
+                    </code>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Webhook URL</label>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 text-sm font-mono text-gray-800 break-all">
+                        {createdSource.webhook_url}
+                      </code>
+                      <button
+                        onClick={() => navigator.clipboard.writeText(createdSource.webhook_url)}
+                        className="p-1 text-gray-400 hover:text-gray-600"
+                        title="Copy URL"
+                      >
+                        <Copy className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">API Key</label>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 text-sm font-mono text-green-700 bg-green-50 p-2 rounded break-all">
+                        {createdSource.api_key}
+                      </code>
+                      <button
+                        onClick={() => navigator.clipboard.writeText(createdSource.api_key)}
+                        className="p-1 text-gray-400 hover:text-gray-600"
+                        title="Copy API Key"
+                      >
+                        <Copy className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={resetCreateSourceModal}
+                  className="w-full mt-6 px-4 py-2 text-sm font-medium text-white bg-gray-900 rounded-lg hover:bg-gray-800"
+                >
+                  Done
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -759,6 +946,7 @@ function MappingsTab({
   mappings,
   loading,
   onRefresh,
+  onCreateSource,
 }: {
   organization: Organization;
   sources: WebhookSource[];
@@ -768,6 +956,7 @@ function MappingsTab({
   mappings: ClientMappingOverride[];
   loading: boolean;
   onRefresh: () => void;
+  onCreateSource: () => void;
 }) {
   const [fieldMappings, setFieldMappings] = useState<FieldMapping[]>([]);
   const [saving, setSaving] = useState(false);
@@ -885,12 +1074,13 @@ function MappingsTab({
         <p className="mt-2 text-gray-500">
           Create a webhook source first to configure field mappings.
         </p>
-        <Link
-          to={`/admin/organizations/${organization.organization_id}/sources`}
+        <button
+          onClick={onCreateSource}
           className="inline-flex items-center gap-2 mt-4 px-4 py-2 text-sm font-medium text-white bg-gray-900 rounded-lg hover:bg-gray-800"
         >
-          Manage Sources
-        </Link>
+          <Plus className="w-4 h-4" />
+          Create Source
+        </button>
       </div>
     );
   }
@@ -914,6 +1104,13 @@ function MappingsTab({
                 </option>
               ))}
             </select>
+            <button
+              onClick={onCreateSource}
+              className="inline-flex items-center gap-1 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+            >
+              <Plus className="w-4 h-4" />
+              New
+            </button>
           </div>
           <button
             onClick={onRefresh}
@@ -1021,6 +1218,7 @@ function VisualMapperTab({
   onSelectSource,
   latestPayload,
   onRefresh,
+  onCreateSource,
 }: {
   organization: Organization;
   sources: WebhookSource[];
@@ -1028,6 +1226,7 @@ function VisualMapperTab({
   onSelectSource: (id: string) => void;
   latestPayload: WebhookPayload | null;
   onRefresh: () => void;
+  onCreateSource: () => void;
 }) {
   // Parse the latest payload
   let parsedPayload: Record<string, unknown> | null = null;
@@ -1126,12 +1325,13 @@ function VisualMapperTab({
         <p className="mt-2 text-gray-500">
           Create a webhook source first to use the Visual Mapper.
         </p>
-        <Link
-          to={`/admin/organizations/${organization.organization_id}/sources`}
+        <button
+          onClick={onCreateSource}
           className="inline-flex items-center gap-2 mt-4 px-4 py-2 text-sm font-medium text-white bg-gray-900 rounded-lg hover:bg-gray-800"
         >
-          Manage Sources
-        </Link>
+          <Plus className="w-4 h-4" />
+          Create Source
+        </button>
       </div>
     );
   }
@@ -1154,6 +1354,13 @@ function VisualMapperTab({
                 </option>
               ))}
             </select>
+            <button
+              onClick={onCreateSource}
+              className="inline-flex items-center gap-1 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+            >
+              <Plus className="w-4 h-4" />
+              New
+            </button>
           </div>
           <button
             onClick={onRefresh}

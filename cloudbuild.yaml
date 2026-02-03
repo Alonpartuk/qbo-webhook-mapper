@@ -18,7 +18,8 @@ steps:
       - '--platform=managed'
       - '--allow-unauthenticated'
       - '--memory=1Gi'
-      - '--update-env-vars=NODE_ENV=production,USE_MOCK_DATA=true,QBO_ENVIRONMENT=sandbox'
+      - '--update-env-vars=NODE_ENV=production,USE_MOCK_DATA=false,QBO_ENVIRONMENT=sandbox,QBO_REDIRECT_URI=https://qbo-webhook-mapper-666004421830.us-central1.run.app/api/oauth/qbo/callback,BACKEND_URL=https://qbo-webhook-mapper-666004421830.us-central1.run.app'
+      - '--update-secrets=QBO_CLIENT_ID=qbo-client-id:latest,QBO_CLIENT_SECRET=qbo-client-secret:latest'
 
 images:
   - 'gcr.io/$PROJECT_ID/qbo-webhook-mapper'

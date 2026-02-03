@@ -18,6 +18,7 @@ import {
   getSourceById,
   getSourceByApiKey,
   getSources,
+  createSource,
   createSyncLog,
   updateSyncLog,
   markPayloadProcessed,
@@ -476,6 +477,57 @@ router.get('/:clientSlug/sources', tenantContext, async (req: Request, res: Resp
     return res.status(500).json({
       success: false,
       error: 'Failed to list sources',
+    });
+  }
+});
+
+/**
+ * POST /api/v1/webhook/:clientSlug/sources
+ *
+ * Create a new webhook source for an organization
+ */
+router.post('/:clientSlug/sources', tenantContext, async (req: Request, res: Response) => {
+  try {
+    const { organization_id, organization_slug } = req.tenant!;
+    const { name, description, source_type } = req.body;
+
+    if (!name) {
+      return res.status(400).json({
+        success: false,
+        error: 'Name is required',
+      });
+    }
+
+    const source = await createSource(
+      organization_id,
+      name,
+      description || '',
+      source_type || 'custom'
+    );
+
+    // Build webhook URL
+    const baseUrl = process.env.API_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const webhookUrl = `${baseUrl}/api/v1/webhook/${organization_slug}/${source.source_id}`;
+
+    return res.status(201).json({
+      success: true,
+      data: {
+        ...source,
+        webhook_url: webhookUrl,
+      },
+      message: 'Source created. Save the API key - it will not be shown again.',
+    });
+  } catch (error) {
+    console.error('Create source error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorDetails = error instanceof Error && 'errors' in error
+      ? JSON.stringify((error as { errors?: unknown }).errors)
+      : undefined;
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to create source',
+      details: errorMessage,
+      ...(errorDetails && { bigQueryErrors: errorDetails }),
     });
   }
 });

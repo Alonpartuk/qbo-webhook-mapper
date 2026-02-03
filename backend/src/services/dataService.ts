@@ -4,9 +4,66 @@
  * Switches between BigQuery and Mock based on config.
  * All functions require organizationId for data isolation.
  * Legacy functions use DEFAULT_ORGANIZATION_ID for backward compatibility.
+ * Includes caching layer for Organization lookups to reduce DB round-trips.
  */
 
-import { DEFAULT_ORGANIZATION_ID } from '../types';
+import { DEFAULT_ORGANIZATION_ID, Organization } from '../types';
+
+// =============================================================================
+// ORGANIZATION CACHE (TTL-based in-memory cache)
+// =============================================================================
+
+interface CacheEntry<T> {
+  value: T;
+  expiresAt: number;
+}
+
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const organizationCacheById = new Map<string, CacheEntry<Organization | null>>();
+const organizationCacheBySlug = new Map<string, CacheEntry<Organization | null>>();
+
+function getCachedOrgById(id: string): Organization | null | undefined {
+  const entry = organizationCacheById.get(id);
+  if (entry && Date.now() < entry.expiresAt) {
+    console.log('[Cache] HIT - Organization by ID:', id);
+    return entry.value;
+  }
+  if (entry) {
+    organizationCacheById.delete(id); // Expired
+  }
+  return undefined; // Cache miss
+}
+
+function getCachedOrgBySlug(slug: string): Organization | null | undefined {
+  const entry = organizationCacheBySlug.get(slug);
+  if (entry && Date.now() < entry.expiresAt) {
+    console.log('[Cache] HIT - Organization by slug:', slug);
+    return entry.value;
+  }
+  if (entry) {
+    organizationCacheBySlug.delete(slug); // Expired
+  }
+  return undefined; // Cache miss
+}
+
+function setCachedOrg(org: Organization | null): void {
+  const expiresAt = Date.now() + CACHE_TTL_MS;
+  if (org) {
+    organizationCacheById.set(org.organization_id, { value: org, expiresAt });
+    organizationCacheBySlug.set(org.slug, { value: org, expiresAt });
+    console.log('[Cache] SET - Organization:', org.slug);
+  }
+}
+
+function invalidateOrgCache(idOrSlug: string): void {
+  organizationCacheById.delete(idOrSlug);
+  organizationCacheBySlug.delete(idOrSlug);
+  console.log('[Cache] INVALIDATE - Organization:', idOrSlug);
+}
+
+// =============================================================================
+// DATA SERVICE INITIALIZATION
+// =============================================================================
 
 // Check if we should use mock data
 // In Cloud Run, credentials are provided via metadata server (no env var needed)
@@ -29,14 +86,47 @@ if (useMock) {
 // MULTI-TENANT EXPORTS (All require organizationId)
 // =============================================================================
 
-// --- Organizations ---
-export const {
-  createOrganization,
-  getOrganizations,
-  getOrganizationById,
-  getOrganizationBySlug,
-  updateOrganization,
-} = dataService;
+// --- Organizations (with caching layer) ---
+export const { createOrganization, getOrganizations } = dataService;
+
+// Cached version of getOrganizationById
+export async function getOrganizationById(id: string): Promise<Organization | null> {
+  // Check cache first
+  const cached = getCachedOrgById(id);
+  if (cached !== undefined) return cached;
+
+  // Cache miss - fetch from DB
+  console.log('[Cache] MISS - Organization by ID:', id);
+  const org = await dataService.getOrganizationById(id);
+  setCachedOrg(org);
+  return org;
+}
+
+// Cached version of getOrganizationBySlug
+export async function getOrganizationBySlug(slug: string): Promise<Organization | null> {
+  // Check cache first
+  const cached = getCachedOrgBySlug(slug);
+  if (cached !== undefined) return cached;
+
+  // Cache miss - fetch from DB
+  console.log('[Cache] MISS - Organization by slug:', slug);
+  const org = await dataService.getOrganizationBySlug(slug);
+  setCachedOrg(org);
+  return org;
+}
+
+// Wrapped updateOrganization that invalidates cache
+export async function updateOrganization(
+  orgId: string,
+  updates: Partial<Organization>
+): Promise<Organization | null> {
+  invalidateOrgCache(orgId);
+  const updated = await dataService.updateOrganization(orgId, updates);
+  if (updated) {
+    setCachedOrg(updated);
+  }
+  return updated;
+}
 
 // --- Admin Users ---
 export const {
@@ -141,6 +231,15 @@ export const {
   getAllAdminUsers,
   deleteAdminUser,
   countSuperAdmins,
+} = dataService;
+
+// --- Connect Tokens (Masked URLs) ---
+export const {
+  createConnectToken,
+  getConnectTokenByHash,
+  getConnectTokensByOrganization,
+  incrementConnectTokenUsage,
+  deactivateConnectToken,
 } = dataService;
 
 // =============================================================================

@@ -18,6 +18,7 @@ import {
   GlobalMappingTemplate,
   ClientMappingOverride,
   AdminUser,
+  ConnectToken,
 } from '../types';
 import { ApiKey, ApiUsageLog } from '../types/apiKey';
 import { AuditLog, AuditLogFilters, AuditLogResponse } from '../types/auditLog';
@@ -35,6 +36,7 @@ const tokens: Map<string, OAuthToken> = new Map();
 const logs: Map<string, SyncLog> = new Map();
 const apiKeys: Map<string, ApiKey> = new Map();
 const apiUsageLogs: Map<string, ApiUsageLog> = new Map();
+const connectTokens: Map<string, ConnectToken> = new Map();
 
 // ============================================================
 // INITIALIZATION
@@ -1268,4 +1270,75 @@ export async function countSuperAdmins(): Promise<number> {
   return Array.from(adminUsers.values())
     .filter(u => u.role === 'super_admin' && u.is_active)
     .length;
+}
+
+// ============================================================
+// CONNECT TOKENS (Masked URLs for external QBO connection)
+// ============================================================
+
+/**
+ * Create a new connect token for an organization
+ */
+export async function createConnectToken(
+  organizationId: string,
+  tokenHash: string,
+  options: { name?: string; expires_at?: Date; max_uses?: number; created_by?: string } = {}
+): Promise<ConnectToken> {
+  const token: ConnectToken = {
+    token_id: uuidv4(),
+    organization_id: organizationId,
+    token_hash: tokenHash,
+    name: options.name,
+    expires_at: options.expires_at,
+    max_uses: options.max_uses,
+    use_count: 0,
+    is_active: true,
+    created_at: new Date(),
+    created_by: options.created_by,
+  };
+
+  connectTokens.set(token.token_id, token);
+  return token;
+}
+
+/**
+ * Get a connect token by its hash (for URL validation)
+ */
+export async function getConnectTokenByHash(tokenHash: string): Promise<ConnectToken | null> {
+  const token = Array.from(connectTokens.values()).find(
+    t => t.token_hash === tokenHash && t.is_active
+  );
+  return token || null;
+}
+
+/**
+ * Get all connect tokens for an organization
+ */
+export async function getConnectTokensByOrganization(organizationId: string): Promise<ConnectToken[]> {
+  return Array.from(connectTokens.values())
+    .filter(t => t.organization_id === organizationId)
+    .sort((a, b) => b.created_at.getTime() - a.created_at.getTime());
+}
+
+/**
+ * Increment use count and update last_used_at for a connect token
+ */
+export async function incrementConnectTokenUsage(tokenId: string): Promise<void> {
+  const token = connectTokens.get(tokenId);
+  if (token) {
+    token.use_count += 1;
+    token.last_used_at = new Date();
+    connectTokens.set(tokenId, token);
+  }
+}
+
+/**
+ * Deactivate a connect token
+ */
+export async function deactivateConnectToken(tokenId: string): Promise<void> {
+  const token = connectTokens.get(tokenId);
+  if (token) {
+    token.is_active = false;
+    connectTokens.set(tokenId, token);
+  }
 }

@@ -3,6 +3,10 @@
  *
  * A minimal, isolated page for end clients to connect their QuickBooks account.
  * No admin interface, no navigation, no internal links.
+ *
+ * Supports two URL formats:
+ * - Token-based (masked): /connect/abc123xyz (12-char alphanumeric hash)
+ * - Slug-based (legacy): /connect/acme-corp (human-readable slug)
  */
 
 import { useState, useEffect } from 'react';
@@ -11,16 +15,27 @@ import { useParams, useSearchParams } from 'react-router-dom';
 interface PublicOrgInfo {
   name: string;
   slug: string;
+  token_hash?: string; // Present for token-based connections
+}
+
+/**
+ * Detect if the URL parameter looks like a token hash (12 alphanumeric chars)
+ * vs a slug (contains dashes, longer, human-readable)
+ */
+function isTokenHash(param: string): boolean {
+  // Token hashes are 12 lowercase alphanumeric characters
+  return /^[a-z0-9]{12}$/.test(param);
 }
 
 export default function PublicConnectPage() {
-  const { slug } = useParams<{ slug: string }>();
+  const { tokenOrSlug } = useParams<{ tokenOrSlug: string }>();
   const [searchParams] = useSearchParams();
 
   const [orgInfo, setOrgInfo] = useState<PublicOrgInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [isToken, setIsToken] = useState(false);
 
   // Check for callback status
   const isConnected = searchParams.get('connected') === 'true';
@@ -28,21 +43,32 @@ export default function PublicConnectPage() {
   const companyName = searchParams.get('companyName');
 
   useEffect(() => {
-    if (slug) {
+    if (tokenOrSlug) {
       loadOrgInfo();
     }
-  }, [slug]);
+  }, [tokenOrSlug]);
 
   const loadOrgInfo = async () => {
+    if (!tokenOrSlug) return;
+
     try {
       setLoading(true);
       setError(null);
 
-      const response = await fetch(`/api/public/org/${slug}`);
+      // Determine if this is a token or slug-based URL
+      const tokenBased = isTokenHash(tokenOrSlug);
+      setIsToken(tokenBased);
+
+      // Call the appropriate API endpoint
+      const endpoint = tokenBased
+        ? `/api/public/connect/${tokenOrSlug}` // Token-based endpoint
+        : `/api/public/org/${tokenOrSlug}`; // Slug-based endpoint
+
+      const response = await fetch(endpoint);
       const data = await response.json();
 
       if (!response.ok || !data.success) {
-        setError('This connection link is invalid or has expired.');
+        setError(data.error || 'This connection link is invalid or has expired.');
         return;
       }
 
@@ -56,9 +82,105 @@ export default function PublicConnectPage() {
 
   const handleConnect = () => {
     setConnecting(true);
-    // Redirect to OAuth flow with public=true flag
-    window.location.href = `/api/v1/connect/${slug}?source=public`;
+    // Use token-based OAuth endpoint if we have a token, otherwise use slug-based
+    if (isToken && orgInfo?.token_hash) {
+      window.location.href = `/api/v1/connect/token/${orgInfo.token_hash}`;
+    } else {
+      window.location.href = `/api/v1/connect/${orgInfo?.slug || tokenOrSlug}?source=public`;
+    }
   };
+
+  // Success state - check FIRST before loading/error states
+  // This ensures the success page shows after OAuth callback even if orgInfo fails to load
+  if (isConnected) {
+    const displayName = orgInfo?.name || tokenOrSlug || 'Your Organization';
+    return (
+      <PageWrapper noIndex>
+        <div className="text-center py-16">
+          {/* Success Icon */}
+          <div className="w-24 h-24 mx-auto mb-8 rounded-full bg-green-100 flex items-center justify-center shadow-lg">
+            <svg className="w-12 h-12 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+
+          {/* Success Message */}
+          <h1 className="text-3xl font-bold text-gray-900 mb-4">Connection Successful!</h1>
+
+          {/* Details Card */}
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-100 p-6 max-w-md mx-auto mb-8">
+            <div className="flex items-center justify-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center">
+                <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                </svg>
+              </div>
+              <span className="text-lg font-medium text-gray-900">QuickBooks Online</span>
+            </div>
+
+            {companyName && (
+              <p className="text-gray-600 mb-2">
+                <span className="font-semibold">{decodeURIComponent(companyName)}</span> is now connected
+              </p>
+            )}
+
+            <p className="text-gray-500 text-sm">
+              Linked to <span className="font-medium text-gray-700">{displayName}</span>
+            </p>
+          </div>
+
+          {/* Instructions */}
+          <div className="bg-blue-50 rounded-xl p-4 max-w-md mx-auto mb-6">
+            <div className="flex items-start gap-3">
+              <div className="flex-shrink-0 mt-0.5">
+                <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <div className="text-left">
+                <p className="text-sm font-medium text-blue-900">What's Next?</p>
+                <p className="text-sm text-blue-700 mt-1">
+                  Your invoices will now sync automatically. No further action is required.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Close Instructions */}
+          <div className="flex items-center justify-center gap-2 text-gray-500">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+            <span className="text-sm">You can safely close this tab now</span>
+          </div>
+        </div>
+      </PageWrapper>
+    );
+  }
+
+  // Error from OAuth callback - check SECOND
+  if (callbackError) {
+    return (
+      <PageWrapper noIndex>
+        <div className="text-center py-16">
+          <div className="w-16 h-16 mx-auto mb-6 rounded-full bg-red-100 flex items-center justify-center">
+            <svg className="w-8 h-8 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </div>
+          <h1 className="text-xl font-semibold text-gray-900 mb-2">Connection Failed</h1>
+          <p className="text-gray-500 mb-6">{decodeURIComponent(callbackError)}</p>
+          <button
+            onClick={handleConnect}
+            disabled={connecting || loading}
+            className="inline-flex items-center px-6 py-3 text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+          >
+            Try Again
+          </button>
+        </div>
+      </PageWrapper>
+    );
+  }
 
   // Loading state
   if (loading) {
@@ -71,7 +193,7 @@ export default function PublicConnectPage() {
     );
   }
 
-  // Error state
+  // Error state - no org info found
   if (error || !orgInfo) {
     return (
       <PageWrapper>
@@ -88,53 +210,7 @@ export default function PublicConnectPage() {
     );
   }
 
-  // Success state - after OAuth callback
-  if (isConnected) {
-    return (
-      <PageWrapper noIndex>
-        <div className="text-center py-16">
-          <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-green-100 flex items-center justify-center">
-            <svg className="w-10 h-10 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
-          </div>
-          <h1 className="text-2xl font-semibold text-gray-900 mb-3">Successfully Connected!</h1>
-          <p className="text-gray-600 mb-2">
-            Your QuickBooks account {companyName && <span className="font-medium">({companyName})</span>} has been linked to <span className="font-medium">{orgInfo.name}</span>.
-          </p>
-          <p className="text-gray-500 text-sm mt-6">
-            You can safely close this window.
-          </p>
-        </div>
-      </PageWrapper>
-    );
-  }
-
-  // Error from OAuth callback
-  if (callbackError) {
-    return (
-      <PageWrapper noIndex>
-        <div className="text-center py-16">
-          <div className="w-16 h-16 mx-auto mb-6 rounded-full bg-red-100 flex items-center justify-center">
-            <svg className="w-8 h-8 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </div>
-          <h1 className="text-xl font-semibold text-gray-900 mb-2">Connection Failed</h1>
-          <p className="text-gray-500 mb-6">{decodeURIComponent(callbackError)}</p>
-          <button
-            onClick={handleConnect}
-            disabled={connecting}
-            className="inline-flex items-center px-6 py-3 text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-          >
-            Try Again
-          </button>
-        </div>
-      </PageWrapper>
-    );
-  }
-
-  // Main connect state
+  // Main connect state - ready to connect
   return (
     <PageWrapper noIndex>
       <div className="text-center py-12">

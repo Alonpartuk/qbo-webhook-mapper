@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useParams, useSearchParams, Link } from 'react-router-dom';
 import {
   CheckCircle2,
   XCircle,
   Link2,
   ArrowRight,
+  ArrowLeft,
   Shield,
   Zap,
   RefreshCw,
@@ -112,6 +113,17 @@ export default function ClientOnboarding() {
       <div className="max-w-4xl mx-auto px-4 py-12">
         {/* Header */}
         <div className="text-center mb-12">
+          {/* Back to Dashboard Button */}
+          <div className="flex justify-center mb-4">
+            <Link
+              to={`/admin/org/${clientSlug}`}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Back to Dashboard
+            </Link>
+          </div>
+
           <div className="inline-flex items-center gap-2 px-4 py-2 bg-white rounded-full shadow-sm border border-gray-200 mb-6">
             <div className="w-2 h-2 rounded-full bg-green-500"></div>
             <span className="text-sm text-gray-600">{status.organization.name}</span>

@@ -4,7 +4,8 @@
  * Multi-tenant OAuth endpoints for connecting organizations to QuickBooks Online.
  *
  * Routes:
- * GET  /api/v1/connect/:clientSlug - Get OAuth authorization URL
+ * GET  /api/v1/connect/:clientSlug - Get OAuth authorization URL (slug-based)
+ * GET  /api/v1/connect/token/:tokenHash - Get OAuth authorization URL (token-based)
  * GET  /api/v1/oauth/callback - Handle OAuth callback (shared for all orgs)
  * GET  /api/v1/org/:clientSlug/status - Get connection status
  * POST /api/v1/org/:clientSlug/disconnect - Disconnect from QBO
@@ -19,6 +20,7 @@ import {
   getConnectionStatus,
   disconnect,
 } from '../../services/multiTenantAuthService';
+import { validateToken, markTokenUsed } from '../../services/connectTokenService';
 
 const router = Router();
 
@@ -82,6 +84,74 @@ router.get('/connect/:clientSlug', tenantContext, async (req: Request, res: Resp
 });
 
 /**
+ * GET /api/v1/connect/token/:tokenHash
+ *
+ * Get OAuth authorization URL using a masked connect token.
+ * This is the secure alternative to slug-based connections.
+ */
+router.get('/connect/token/:tokenHash', async (req: Request, res: Response) => {
+  try {
+    const { tokenHash } = req.params;
+    const shouldRedirect = req.query.redirect !== 'false';
+    const returnUrl = req.query.return_url as string | undefined;
+
+    // Validate token and get organization
+    const validation = await validateToken(tokenHash);
+    if (!validation.valid || !validation.organization || !validation.token) {
+      const errorMessage = validation.error || 'Invalid connection link';
+      if (shouldRedirect) {
+        return res.redirect(`${FRONTEND_BASE_URL}/connect/${tokenHash}?error=${encodeURIComponent(errorMessage)}`);
+      }
+      return res.status(400).json({
+        success: false,
+        error: errorMessage,
+      });
+    }
+
+    const { organization, token } = validation;
+
+    // Mark token as used (increment usage counter)
+    await markTokenUsed(token.token_id);
+
+    // Generate authorization URL with token hash in state for callback routing
+    const result = await getAuthorizationUrl(
+      organization.organization_id,
+      'public', // Token-based connections are always public
+      returnUrl,
+      tokenHash // Pass token hash for callback routing
+    );
+
+    if (!result.success) {
+      const errorPath = `/connect/${tokenHash}?error=${encodeURIComponent(result.error!)}`;
+      if (shouldRedirect) {
+        return res.redirect(`${FRONTEND_BASE_URL}${errorPath}`);
+      }
+      return res.status(400).json({
+        success: false,
+        error: result.error,
+      });
+    }
+
+    if (shouldRedirect) {
+      return res.redirect(result.authUrl!);
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        authUrl: result.authUrl,
+      },
+    });
+  } catch (error) {
+    console.error('OAuth token connect error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to initiate OAuth flow',
+    });
+  }
+});
+
+/**
  * GET /api/v1/oauth/callback
  *
  * Handle OAuth callback from QuickBooks.
@@ -130,11 +200,13 @@ router.get('/oauth/callback', async (req: Request, res: Response) => {
       realmId: result.realmId,
       source: result.source,
       returnUrl: result.returnUrl,
+      tokenHash: result.tokenHash ? '***' : 'none',
       error: result.error
     });
 
     // Determine redirect path based on source (public vs admin) and returnUrl
     const isPublic = result.source === 'public';
+    const isTokenBased = !!result.tokenHash; // Token-based connections use tokenHash instead of slug
 
     // Build success/error params
     const buildRedirectUrl = (basePath: string, params: Record<string, string>): string => {
@@ -158,9 +230,15 @@ router.get('/oauth/callback', async (req: Request, res: Response) => {
 
     if (!result.success) {
       console.error('OAuth callback failed:', result.error);
-      const errorPath = isPublic && result.slug
-        ? `/connect/${result.slug}`
-        : `/settings`;
+      // For token-based connections, use tokenHash; otherwise use slug
+      let errorPath: string;
+      if (isTokenBased) {
+        errorPath = `/connect/${result.tokenHash}`;
+      } else if (isPublic && result.slug) {
+        errorPath = `/connect/${result.slug}`;
+      } else {
+        errorPath = '/settings';
+      }
       return res.redirect(buildRedirectUrl(errorPath, { error: result.error! }));
     }
 
@@ -174,9 +252,14 @@ router.get('/oauth/callback', async (req: Request, res: Response) => {
       successParams.companyName = result.companyName;
     }
 
-    // Public connects go to /connect/:slug, admin connects go to /org/:slug/settings
+    // Determine redirect path:
+    // - Token-based public connects go to /connect/:tokenHash
+    // - Slug-based public connects go to /connect/:slug
+    // - Admin connects go to /org/:slug/settings
     let defaultRedirectPath: string;
-    if (isPublic && result.slug) {
+    if (isTokenBased) {
+      defaultRedirectPath = `/connect/${result.tokenHash}`;
+    } else if (isPublic && result.slug) {
       defaultRedirectPath = `/connect/${result.slug}`;
     } else if (result.slug) {
       defaultRedirectPath = `/org/${result.slug}/settings`;
@@ -237,9 +320,13 @@ router.get('/org/:clientSlug/status', tenantContext, async (req: Request, res: R
     });
   } catch (error) {
     console.error('Get status error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorStack = error instanceof Error ? error.stack : undefined;
+    console.error('Get status error details:', errorMessage, errorStack);
     return res.status(500).json({
       success: false,
       error: 'Failed to get connection status',
+      debug: errorMessage, // Temporary for debugging
     });
   }
 });
@@ -302,12 +389,20 @@ router.post('/org/:clientSlug/disconnect', tenantContext, async (req: Request, r
       });
     }
 
-    // Disconnect
-    await disconnect(organization_id);
+    // Disconnect with proper error handling
+    const result = await disconnect(organization_id);
+
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        error: result.error || 'Failed to disconnect from QuickBooks',
+      });
+    }
 
     return res.json({
       success: true,
       message: 'Disconnected from QuickBooks',
+      warning: result.error, // Include any non-fatal warnings
       data: {
         previousRealmId: currentStatus.realmId,
         connectUrl: `${process.env.API_BASE_URL || req.protocol + '://' + req.get('host')}/api/v1/connect/${organization_slug}?source=admin`,
@@ -315,9 +410,11 @@ router.post('/org/:clientSlug/disconnect', tenantContext, async (req: Request, r
     });
   } catch (error) {
     console.error('Disconnect error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return res.status(500).json({
       success: false,
       error: 'Failed to disconnect from QuickBooks',
+      debug: errorMessage,
     });
   }
 });

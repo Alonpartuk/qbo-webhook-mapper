@@ -172,6 +172,24 @@ export async function getOrgSources(clientSlug: string): Promise<WebhookSource[]
   return response.data.data || [];
 }
 
+/**
+ * Create a new webhook source for an organization
+ */
+export async function createOrgSource(
+  clientSlug: string,
+  data: {
+    name: string;
+    description?: string;
+    source_type?: string;
+  }
+): Promise<WebhookSource & { webhook_url: string }> {
+  const response = await apiClient.post<ApiResponse<WebhookSource & { webhook_url: string }>>(
+    `/v1/webhook/${clientSlug}/sources`,
+    data
+  );
+  return response.data.data!;
+}
+
 // =============================================================================
 // CLIENT MAPPING OVERRIDES
 // =============================================================================
@@ -650,4 +668,69 @@ export async function getAuthStatus(): Promise<{
 export function getMicrosoftLoginUrl(): string {
   const baseUrl = import.meta.env.VITE_API_URL || '/api';
   return `${baseUrl}/admin/auth/microsoft`;
+}
+
+// =============================================================================
+// CONNECT TOKENS (Masked URLs for external QBO connection)
+// =============================================================================
+
+export interface ConnectToken {
+  token_id: string;
+  organization_id: string;
+  token_hash: string;
+  name?: string;
+  expires_at?: string;
+  max_uses?: number;
+  use_count: number;
+  is_active: boolean;
+  created_at: string;
+  created_by?: string;
+  last_used_at?: string;
+  connect_url?: string; // Full URL to the public connect page
+}
+
+/**
+ * Get all connect tokens for an organization
+ */
+export async function getConnectTokens(organizationId: string): Promise<ConnectToken[]> {
+  const response = await apiClient.get<ApiResponse<ConnectToken[]>>(
+    `/admin/organizations/${organizationId}/connect-tokens`
+  );
+  return response.data.data || [];
+}
+
+/**
+ * Create a new connect token for an organization
+ */
+export async function createConnectToken(
+  organizationId: string,
+  data: {
+    name?: string;
+    expires_in_hours?: number;
+    max_uses?: number;
+  }
+): Promise<ConnectToken> {
+  const response = await apiClient.post<ApiResponse<ConnectToken>>(
+    `/admin/organizations/${organizationId}/connect-tokens`,
+    data
+  );
+  if (!response.data.success) {
+    throw new Error(response.data.error || 'Failed to create connect token');
+  }
+  return response.data.data!;
+}
+
+/**
+ * Revoke a connect token
+ */
+export async function revokeConnectToken(
+  organizationId: string,
+  tokenId: string
+): Promise<void> {
+  const response = await apiClient.delete<ApiResponse<void>>(
+    `/admin/organizations/${organizationId}/connect-tokens/${tokenId}`
+  );
+  if (!response.data.success) {
+    throw new Error(response.data.error || 'Failed to revoke connect token');
+  }
 }

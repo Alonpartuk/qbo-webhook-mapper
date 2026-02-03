@@ -102,15 +102,24 @@ function verifyStateSignature(data: string, signature: string): boolean {
  * Encode OAuth state with organization info, return URL, and signature
  * @param source - 'public' for client-facing connect, 'admin' for admin dashboard
  * @param returnUrl - Optional URL to redirect to after OAuth callback
+ * @param tokenHash - Optional connect token hash for masked URL routing
  */
 function encodeOAuthState(
   organizationId: string,
   slug: string,
   source: 'public' | 'admin' = 'admin',
-  returnUrl?: string
+  returnUrl?: string,
+  tokenHash?: string
 ): string {
   const timestamp = Date.now();
-  const data = JSON.stringify({ org_id: organizationId, slug, timestamp, source, return_url: returnUrl });
+  const data = JSON.stringify({
+    org_id: organizationId,
+    slug,
+    timestamp,
+    source,
+    return_url: returnUrl,
+    token_hash: tokenHash, // For token-based connections
+  });
   const signature = signState(data);
   const state = Buffer.from(JSON.stringify({ data, signature })).toString('base64');
   return state;
@@ -125,6 +134,7 @@ function decodeOAuthState(state: string): {
   slug?: string;
   source?: 'public' | 'admin';
   returnUrl?: string;
+  tokenHash?: string;
   error?: string;
 } {
   try {
@@ -152,6 +162,7 @@ function decodeOAuthState(state: string): {
       slug: parsed.slug,
       source: parsed.source || 'admin',
       returnUrl: parsed.return_url,
+      tokenHash: parsed.token_hash, // For token-based connections
     };
   } catch (error) {
     // Log specific error for debugging
@@ -164,17 +175,19 @@ function decodeOAuthState(state: string): {
  * Get authorization URL for a specific organization
  * @param source - 'public' for client-facing connect page, 'admin' for admin dashboard
  * @param returnUrl - Optional URL to redirect to after OAuth callback
+ * @param tokenHash - Optional connect token hash for masked URL routing
  */
 export async function getAuthorizationUrl(
   organizationIdOrSlug: string,
   source: 'public' | 'admin' = 'admin',
-  returnUrl?: string
+  returnUrl?: string,
+  tokenHash?: string
 ): Promise<{
   success: boolean;
   authUrl?: string;
   error?: string;
 }> {
-  console.log('[OAuth] getAuthorizationUrl called for:', organizationIdOrSlug, 'source:', source, 'returnUrl:', returnUrl);
+  console.log('[OAuth] getAuthorizationUrl called for:', organizationIdOrSlug, 'source:', source, 'returnUrl:', returnUrl, 'tokenHash:', tokenHash ? '***' : 'none');
 
   // Try to find organization by ID first, then by slug
   let org: Organization | null = await getOrganizationById(organizationIdOrSlug);
@@ -201,8 +214,8 @@ export async function getAuthorizationUrl(
     };
   }
 
-  // Generate signed state parameter with source and return URL
-  const state = encodeOAuthState(org.organization_id, org.slug, source, returnUrl);
+  // Generate signed state parameter with source, return URL, and optional token hash
+  const state = encodeOAuthState(org.organization_id, org.slug, source, returnUrl, tokenHash);
 
   // Create fresh OAuth client for this request
   const oauthClient = createOAuthClient();
@@ -229,6 +242,7 @@ export async function handleCallback(url: string): Promise<{
   companyName?: string;
   source?: 'public' | 'admin';
   returnUrl?: string;
+  tokenHash?: string;
   error?: string;
 }> {
   console.log('[MultiTenantAuth] handleCallback called');
@@ -267,8 +281,9 @@ export async function handleCallback(url: string): Promise<{
     const slug = stateResult.slug;
     const source = stateResult.source;
     const returnUrl = stateResult.returnUrl;
+    const tokenHash = stateResult.tokenHash;
 
-    console.log('[MultiTenantAuth] Extracted org from state:', { organizationId, slug, returnUrl });
+    console.log('[MultiTenantAuth] Extracted org from state:', { organizationId, slug, returnUrl, tokenHash: tokenHash ? '***' : 'none' });
 
     // Verify organization exists and is active
     const org = await getOrganizationById(organizationId);
@@ -329,6 +344,7 @@ export async function handleCallback(url: string): Promise<{
       companyName,
       source,
       returnUrl,
+      tokenHash,
     };
   } catch (error) {
     console.error('OAuth callback error:', error);
@@ -385,31 +401,61 @@ export async function getConnectionStatus(organizationId: string): Promise<{
 
 /**
  * Disconnect an organization from QuickBooks
+ * Properly revokes tokens with Intuit and updates database status
  */
-export async function disconnect(organizationId: string): Promise<void> {
+export async function disconnect(organizationId: string): Promise<{ success: boolean; error?: string }> {
+  console.log('[Disconnect] Starting disconnect for organization:', organizationId);
+
   const token = await getActiveToken(organizationId);
   if (!token) {
-    return;
+    console.log('[Disconnect] No active token found for organization:', organizationId);
+    return { success: true }; // Already disconnected
   }
+
+  let revocationSucceeded = false;
+  let revocationError: string | undefined;
 
   try {
     const decryptedAccessToken = decryptToken(token.access_token);
+    const decryptedRefreshToken = decryptToken(token.refresh_token);
 
     // Create fresh client for revocation
     const oauthClient = createOAuthClient();
     oauthClient.setToken({
       access_token: decryptedAccessToken,
-      refresh_token: decryptToken(token.refresh_token),
+      refresh_token: decryptedRefreshToken,
       realmId: token.realm_id,
     });
 
+    // Try to revoke with Intuit
+    console.log('[Disconnect] Attempting to revoke token with Intuit for realmId:', token.realm_id);
     await oauthClient.revoke({ access_token: decryptedAccessToken });
+    revocationSucceeded = true;
+    console.log('[Disconnect] Token revoked successfully with Intuit');
   } catch (error) {
-    console.error('Failed to revoke token:', error);
+    // Log but don't fail - token might already be revoked or expired
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.warn('[Disconnect] Failed to revoke token with Intuit (non-fatal):', errorMessage);
+    revocationError = errorMessage;
   }
 
-  // Mark token as inactive
-  await updateToken(organizationId, token.token_id, { is_active: false });
+  // Always update database even if Intuit revocation failed
+  try {
+    await updateToken(organizationId, token.token_id, {
+      is_active: false,
+      sync_status: 'disconnected',
+    });
+    console.log('[Disconnect] Database updated - token marked as inactive');
+  } catch (dbError) {
+    const errorMessage = dbError instanceof Error ? dbError.message : 'Unknown database error';
+    console.error('[Disconnect] Failed to update database:', errorMessage);
+    return { success: false, error: `Failed to update database: ${errorMessage}` };
+  }
+
+  return {
+    success: true,
+    error: revocationError ? `Token revocation warning: ${revocationError}` : undefined,
+  };
 }
 
 /**

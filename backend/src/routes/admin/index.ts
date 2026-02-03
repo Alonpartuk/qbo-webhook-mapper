@@ -11,6 +11,7 @@ import organizationsRouter from './organizations';
 import templatesRouter from './templates';
 import overridesRouter from './overrides';
 import apiKeysRouter from './apiKeys';
+import connectTokensRouter from './connectTokens';
 import systemRouter from './system';
 import usersRouter from './users';
 import auditLogsRouter from './auditLogs';
@@ -39,6 +40,10 @@ router.use('/audit-logs', adminAuth, auditLogsRouter);
 // API Key management routes (requires admin authentication)
 // Mounts both /organizations/:orgId/api-keys and /global/api-keys
 router.use('/', adminAuth, apiKeysRouter);
+
+// Connect token routes (masked URLs for external connection)
+// Mounts at /organizations/:orgId/connect-tokens
+router.use('/', adminAuth, connectTokensRouter);
 
 // Client override routes (includes effective-mapping, payloads, logs)
 // These are mounted at root because some paths start with /organizations/:orgId

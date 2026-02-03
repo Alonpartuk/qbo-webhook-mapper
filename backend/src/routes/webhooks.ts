@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import * as dataService from '../services/dataService';
+import { legacySavePayload } from '../services/dataService';
 import { authenticateWebhook } from '../middleware/auth';
 
 const router = Router();
@@ -34,8 +34,8 @@ router.post('/:sourceId', authenticateWebhook, async (req: Request, res: Respons
       }
     });
 
-    // Save payload to BigQuery
-    const savedPayload = await dataService.savePayload(sourceId, payload, headers);
+    // Save payload to BigQuery (legacy route uses default organization)
+    const savedPayload = await legacySavePayload(sourceId, payload, headers);
 
     return res.status(200).json({
       success: true,
